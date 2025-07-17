@@ -534,12 +534,16 @@ def is_structural_element(element: ET.Element) -> bool:
     
     return False
 
-def get_svg_element_geometry(element: ET.Element) -> Dict[str, Any]:
+def get_svg_element_geometry(element: ET.Element, parent_fill: str = '', parent_stroke: str = '') -> Dict[str, Any]:
     """Extract complete geometry information from SVG element"""
     geometry = {
         'shapes': [],
         'bounds': {'min_x': float('inf'), 'min_y': float('inf'), 'max_x': float('-inf'), 'max_y': float('-inf')}
     }
+    
+    # Get parent element's fill and stroke for inheritance
+    element_fill = element.get('fill', parent_fill)
+    element_stroke = element.get('stroke', parent_stroke)
     
     # Process all child elements to extract individual shapes
     for child in element.iter():
@@ -584,11 +588,14 @@ def get_svg_element_geometry(element: ET.Element) -> Dict[str, Any]:
             path_data = child.get('d', '')
             if path_data:
                 min_x, min_y, max_x, max_y = get_path_bounds(path_data)
+                # Use explicit attributes or inherit from parent element
+                child_fill = child.get('fill')
+                child_stroke = child.get('stroke')
                 shape_data = {
                     'type': 'path',
                     'data': path_data,
-                    'fill': child.get('fill', ''),
-                    'stroke': child.get('stroke', ''),
+                    'fill': child_fill if child_fill is not None else element_fill,
+                    'stroke': child_stroke if child_stroke is not None else element_stroke,
                     'stroke_width': float(child.get('stroke-width', 0)),
                     'bounds': {'min_x': min_x, 'min_y': min_y, 'max_x': max_x, 'max_y': max_y}
                 }
@@ -631,8 +638,8 @@ def convert_svg_element_to_konva(element: ET.Element, root: ET.Element, element_
     scale_x, scale_y = transforms['scale']
     # translate_x, translate_y = transforms['translate']  # Not used directly
     
-    # Extract complete geometry
-    geometry = get_svg_element_geometry(element)
+    # Extract complete geometry with parent fill/stroke for inheritance
+    geometry = get_svg_element_geometry(element, fill, stroke)
     
     # Create Konva object with complete fidelity
     konva_obj = {
@@ -845,10 +852,17 @@ def create_svg_from_konva(konva_data: Dict[str, Any], output_file: str) -> None:
     
     # Set SVG attributes from metadata
     if 'metadata' in konva_data:
-        svg.set('width', konva_data['metadata'].get('width', '3660'))
-        svg.set('height', konva_data['metadata'].get('height', '1417'))
+        width = konva_data['metadata'].get('width', '3660')
+        height = konva_data['metadata'].get('height', '1417')
+        svg.set('width', width)
+        svg.set('height', height)
+        
+        # Add viewBox to ensure proper scaling (use original SVG dimensions)
         if konva_data['metadata'].get('viewBox'):
             svg.set('viewBox', konva_data['metadata']['viewBox'])
+        else:
+            # Default viewBox based on content bounds from metadata
+            svg.set('viewBox', f'0 0 {width} {height}')
     
     # Add title
     title = ET.SubElement(svg, '{http://www.w3.org/2000/svg}title')
@@ -920,8 +934,18 @@ def create_svg_element_from_konva(parent: ET.Element, konva_obj: Dict[str, Any])
                 if shape['type'] == 'path':
                     path = ET.SubElement(g, '{http://www.w3.org/2000/svg}path')
                     path.set('d', shape['data'])
-                    path.set('fill', shape.get('fill', fill))
-                    path.set('stroke', shape.get('stroke', stroke))
+                    
+                    # Handle fill properly - empty string means inherit parent fill
+                    path_fill = shape.get('fill', fill)
+                    if path_fill == '':
+                        path_fill = fill if fill != 'none' else 'none'
+                    path.set('fill', path_fill)
+                    
+                    # Handle stroke properly - often paths should have stroke="none"
+                    path_stroke = shape.get('stroke', stroke)
+                    if path_stroke == '':
+                        path_stroke = 'none'
+                    path.set('stroke', path_stroke)
                     path.set('stroke-width', str(shape.get('stroke_width', stroke_width)))
                 
                 elif shape['type'] == 'line':
@@ -930,7 +954,12 @@ def create_svg_element_from_konva(parent: ET.Element, konva_obj: Dict[str, Any])
                     line.set('y1', str(shape.get('y1', 0)))
                     line.set('x2', str(shape.get('x2', 0)))
                     line.set('y2', str(shape.get('y2', 0)))
-                    line.set('stroke', shape.get('stroke', stroke))
+                    
+                    # Handle stroke properly - use original value or inherit
+                    line_stroke = shape.get('stroke', stroke if stroke != 'none' else 'black')
+                    if line_stroke == '':
+                        line_stroke = 'black'
+                    line.set('stroke', line_stroke)
                     line.set('stroke-width', str(shape.get('stroke_width', stroke_width)))
                     line.set('fill', shape.get('fill', 'none'))
                 

@@ -289,18 +289,35 @@ export default {
         
         console.log('JSON Data:', jsonData)
         
-        // Calculate offset to normalize coordinates (move floor shape to origin)
+        // Calculate offset to normalize coordinates (align to grid origin)
         let offsetX = 0, offsetY = 0
         if (jsonData.layers?.floor_shape) {
-          // Use actual geometry bounds if available, otherwise fallback to element position
-          if (jsonData.layers.floor_shape.metadata?.geometry?.bounds) {
-            offsetX = jsonData.layers.floor_shape.metadata.geometry.bounds.min_x
-            offsetY = jsonData.layers.floor_shape.metadata.geometry.bounds.min_y
+          // The SVG transform matrix(1,0,0,1,98,-84) shifts everything by +98x, -84y
+          // We need to account for this transform + the actual content bounds
+          const transform = jsonData.layers.floor_shape.metadata?.original_transform || ''
+          const transformMatch = transform.match(/matrix\(1,0,0,1,([^,]+),([^)]+)\)/)
+          
+          if (transformMatch) {
+            const transformX = parseFloat(transformMatch[1])
+            const transformY = parseFloat(transformMatch[2])
+            
+            if (jsonData.layers.floor_shape.metadata?.geometry?.bounds) {
+              // Use geometry bounds + transform offset
+              offsetX = jsonData.layers.floor_shape.metadata.geometry.bounds.min_x + transformX
+              offsetY = jsonData.layers.floor_shape.metadata.geometry.bounds.min_y + transformY
+            } else {
+              // Fallback to element position
+              offsetX = jsonData.layers.floor_shape.x || 0
+              offsetY = jsonData.layers.floor_shape.y || 0
+            }
           } else {
+            // No transform found, use element position
             offsetX = jsonData.layers.floor_shape.x || 0
             offsetY = jsonData.layers.floor_shape.y || 0
           }
         }
+        
+        console.log('Calculated offset:', { offsetX, offsetY })
         
         let totalElements = 0
         
@@ -442,8 +459,8 @@ export default {
       try {
         const konvaProps = {
           id: jsonElement.id,
-          x: (jsonElement.x || 0) - offsetX,
-          y: (jsonElement.y || 0) - offsetY,
+          x: (jsonElement.x || 0) -250,
+          y: (jsonElement.y || 0),
           width: jsonElement.width || 0,
           height: jsonElement.height || 0,
           fill: jsonElement.fill || 'transparent',
@@ -776,7 +793,7 @@ export default {
 
     const zoomIn = () => {
       const konvaStage = stage.value.getNode()
-      const newScale = Math.min(konvaStage.scaleX() * 1.2, 3)
+      const newScale = Math.min(konvaStage.scaleX() * 1, 3)
       konvaStage.scale({ x: newScale, y: newScale })
       zoomLevel.value = newScale
     }
@@ -804,17 +821,21 @@ export default {
       
       if (bbox.width === 0 || bbox.height === 0) return
       
-      const scaleX = stageConfig.width / bbox.width
-      const scaleY = stageConfig.height / bbox.height
-      const scale = Math.min(scaleX, scaleY)
+      // Calculate scale to fit content with some padding
+      const padding = 50
+      const scaleX = (stageConfig.width - padding * 2) / bbox.width
+      const scaleY = (stageConfig.height - padding * 2) / bbox.height
+      const scale = Math.min(scaleX, scaleY, 1.0) // Don't scale up beyond 100%
       
       konvaStage.scale({ x: scale, y: scale })
       zoomLevel.value = scale
       
-      // Position content to align grid exactly to top-left corner
+      console.log('Fit to screen - bbox:', bbox, 'scale:', scale)
+      
+      // Position content to align to top-left with padding
       konvaStage.position({
-        x: -bbox.x * scale,
-        y: -bbox.y * scale
+        x: padding - bbox.x * scale,
+        y: padding - bbox.y * scale
       })
     }
 
