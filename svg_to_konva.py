@@ -14,6 +14,10 @@ import os
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 
+# Register SVG namespace
+ET.register_namespace('', 'http://www.w3.org/2000/svg')
+ET.register_namespace('xlink', 'http://www.w3.org/1999/xlink')
+
 def extract_all_transforms(transform_str: str) -> Dict[str, Any]:
     """Extract all transformation values from a transform string"""
     transforms = {
@@ -834,6 +838,153 @@ def parse_svg_to_konva(svg_file: str) -> Dict[str, Any]:
     
     return result
 
+def create_svg_from_konva(konva_data: Dict[str, Any], output_file: str) -> None:
+    """Create an SVG file from the Konva JSON data for comparison"""
+    # Create root SVG element
+    svg = ET.Element('{http://www.w3.org/2000/svg}svg')
+    
+    # Set SVG attributes from metadata
+    if 'metadata' in konva_data:
+        svg.set('width', konva_data['metadata'].get('width', '3660'))
+        svg.set('height', konva_data['metadata'].get('height', '1417'))
+        if konva_data['metadata'].get('viewBox'):
+            svg.set('viewBox', konva_data['metadata']['viewBox'])
+    
+    # Add title
+    title = ET.SubElement(svg, '{http://www.w3.org/2000/svg}title')
+    title.text = f"Converted from {konva_data.get('source_file', 'unknown')}"
+    
+    # Create groups for each layer type
+    layers_order = ['floor_shape', 'server_racks', 'cooling_units', 'cooling_tiles', 'pdu_ppc', 'other']
+    
+    for layer_name in layers_order:
+        if layer_name not in konva_data['layers']:
+            continue
+            
+        layer_data = konva_data['layers'][layer_name]
+        
+        # Handle floor_shape differently (single element)
+        if layer_name == 'floor_shape' and layer_data:
+            g = ET.SubElement(svg, '{http://www.w3.org/2000/svg}g')
+            g.set('id', 'floor-shape-layer')
+            g.set('opacity', str(layer_data.get('opacity', 0.3)))
+            create_svg_element_from_konva(g, layer_data)
+        
+        # Handle arrays of elements
+        elif isinstance(layer_data, list) and layer_data:
+            g = ET.SubElement(svg, '{http://www.w3.org/2000/svg}g')
+            g.set('id', f'{layer_name}-layer')
+            
+            for i, element in enumerate(layer_data):
+                create_svg_element_from_konva(g, element)
+    
+    # Write SVG to file
+    tree = ET.ElementTree(svg)
+    ET.indent(tree, space="  ")
+    tree.write(output_file, encoding='utf-8', xml_declaration=True)
+
+def create_svg_element_from_konva(parent: ET.Element, konva_obj: Dict[str, Any]) -> None:
+    """Create an SVG element from a Konva object"""
+    # Get basic properties
+    fill = konva_obj.get('fill', 'none')
+    stroke = konva_obj.get('stroke', 'none')
+    stroke_width = konva_obj.get('strokeWidth', 1)
+    opacity = konva_obj.get('opacity', 1)
+    
+    # Create group for the element
+    g = ET.SubElement(parent, '{http://www.w3.org/2000/svg}g')
+    g.set('id', konva_obj.get('id', 'unknown'))
+    
+    # Use original transform if available
+    if 'metadata' in konva_obj and 'original_transform' in konva_obj['metadata']:
+        original_transform = konva_obj['metadata']['original_transform']
+        if original_transform:
+            g.set('transform', original_transform)
+    
+    # Set opacity if not 1
+    if opacity != 1:
+        g.set('opacity', str(opacity))
+    
+    # Apply original SVG attributes if available
+    if 'metadata' in konva_obj and 'svg_attributes' in konva_obj['metadata']:
+        for attr, value in konva_obj['metadata']['svg_attributes'].items():
+            if attr not in ['transform', 'id']:  # Skip transform and id as we already set them
+                g.set(attr, value)
+    
+    # Check if we have detailed geometry in metadata
+    if 'metadata' in konva_obj and 'geometry' in konva_obj['metadata']:
+        geometry = konva_obj['metadata']['geometry']
+        if 'shapes' in geometry:
+            # Create each shape from the geometry
+            for shape in geometry['shapes']:
+                if shape['type'] == 'path':
+                    path = ET.SubElement(g, '{http://www.w3.org/2000/svg}path')
+                    path.set('d', shape['data'])
+                    path.set('fill', shape.get('fill', fill))
+                    path.set('stroke', shape.get('stroke', stroke))
+                    path.set('stroke-width', str(shape.get('stroke_width', stroke_width)))
+                
+                elif shape['type'] == 'line':
+                    line = ET.SubElement(g, '{http://www.w3.org/2000/svg}line')
+                    line.set('x1', str(shape.get('x1', 0)))
+                    line.set('y1', str(shape.get('y1', 0)))
+                    line.set('x2', str(shape.get('x2', 0)))
+                    line.set('y2', str(shape.get('y2', 0)))
+                    line.set('stroke', shape.get('stroke', stroke))
+                    line.set('stroke-width', str(shape.get('stroke_width', stroke_width)))
+                    line.set('fill', shape.get('fill', 'none'))
+                
+                elif shape['type'] == 'rect':
+                    rect = ET.SubElement(g, '{http://www.w3.org/2000/svg}rect')
+                    rect.set('x', str(shape.get('x', 0)))
+                    rect.set('y', str(shape.get('y', 0)))
+                    rect.set('width', str(shape.get('width', 0)))
+                    rect.set('height', str(shape.get('height', 0)))
+                    rect.set('fill', shape.get('fill', fill))
+                    rect.set('stroke', shape.get('stroke', stroke))
+                    rect.set('stroke-width', str(shape.get('stroke_width', stroke_width)))
+                
+                elif shape['type'] == 'circle':
+                    circle = ET.SubElement(g, '{http://www.w3.org/2000/svg}circle')
+                    circle.set('cx', str(shape.get('cx', 0)))
+                    circle.set('cy', str(shape.get('cy', 0)))
+                    circle.set('r', str(shape.get('r', 0)))
+                    circle.set('fill', shape.get('fill', fill))
+                    circle.set('stroke', shape.get('stroke', stroke))
+                    circle.set('stroke-width', str(shape.get('stroke_width', stroke_width)))
+                
+                elif shape['type'] == 'text':
+                    text = ET.SubElement(g, '{http://www.w3.org/2000/svg}text')
+                    text.set('x', str(shape.get('x', 0)))
+                    text.set('y', str(shape.get('y', 0)))
+                    text.set('font-size', str(shape.get('font_size', 12)))
+                    text.set('font-family', shape.get('font_family', 'Arial'))
+                    text.set('fill', shape.get('fill', 'black'))
+                    text.text = shape.get('text', '')
+    else:
+        # Fallback: create a simple rectangle with default or extracted dimensions
+        width = konva_obj.get('width', 50)
+        height = konva_obj.get('height', 50)
+        
+        rect = ET.SubElement(g, '{http://www.w3.org/2000/svg}rect')
+        rect.set('x', '0')
+        rect.set('y', '0')
+        rect.set('width', str(width))
+        rect.set('height', str(height))
+        rect.set('fill', fill)
+        rect.set('stroke', stroke)
+        rect.set('stroke-width', str(stroke_width))
+        
+        # Add a label if we know the type
+        if konva_obj.get('type'):
+            text = ET.SubElement(g, '{http://www.w3.org/2000/svg}text')
+            text.set('x', str(width/2))
+            text.set('y', str(height/2))
+            text.set('text-anchor', 'middle')
+            text.set('font-size', '10')
+            text.set('fill', 'black')
+            text.text = konva_obj['type']
+
 def main():
     if len(sys.argv) != 2:
         print("Usage: python svg_to_konva.py <svg_file>")
@@ -854,16 +1005,21 @@ def main():
         print("Failed to parse SVG file")
         sys.exit(1)
     
-    # Generate output filename
+    # Generate output filenames
     base_name = os.path.splitext(svg_file)[0]
-    output_file = f"{base_name}_konva.json"
+    json_output_file = f"{base_name}_konva.json"
+    svg_output_file = f"{base_name}_converted.svg"
     
     # Write JSON output
     try:
-        with open(output_file, 'w') as f:
+        with open(json_output_file, 'w') as f:
             json.dump(result, f, indent=2)
         
-        print(f"Successfully converted to {output_file}")
+        print(f"Successfully converted to {json_output_file}")
+        
+        # Create SVG output for comparison
+        create_svg_from_konva(result, svg_output_file)
+        print(f"Created comparison SVG: {svg_output_file}")
         print(f"Found {result['metadata']['total_elements']} elements:")
         print(f"  - {1 if result['layers']['floor_shape'] else 0} floor shape")
         print(f"  - {len(result['layers']['server_racks'])} server racks")
