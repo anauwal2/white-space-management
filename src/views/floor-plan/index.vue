@@ -122,15 +122,15 @@
             </div>
             <div class="property-item">
               <label>Position:</label>
-              <span>{{ Math.round(selectedObject.x) }}, {{ Math.round(selectedObject.y) }}</span>
+              <span>{{ selectedObject.x }}, {{ selectedObject.y }}</span>
             </div>
             <div class="property-item">
               <label>Size:</label>
-              <span>{{ Math.round(selectedObject.width) }} × {{ Math.round(selectedObject.height) }}</span>
+              <span>{{ selectedObject.width }} × {{ selectedObject.height }}</span>
             </div>
             <div class="property-item">
               <label>Rotation:</label>
-              <span>{{ Math.round(selectedObject.rotation) }}°</span>
+              <span>{{ selectedObject.rotation }}°</span>
             </div>
           </div>
           <div v-else class="no-selection">
@@ -211,16 +211,27 @@ export default {
               return
             }
             
+            // Find the topmost listening element (in case we clicked on a child)
+            let targetNode = e.target
+            while (targetNode && !targetNode.listening() && targetNode.getParent()) {
+              targetNode = targetNode.getParent()
+            }
+            
+            // Skip if we couldn't find a listening parent
+            if (!targetNode || !targetNode.listening()) {
+              return
+            }
+            
             // Select clicked object
-            transformer.nodes([e.target])
+            transformer.nodes([targetNode])
             selectedObject.value = {
-              id: e.target.id(),
-              className: e.target.getClassName(),
-              x: e.target.x(),
-              y: e.target.y(),
-              width: e.target.width(),
-              height: e.target.height(),
-              rotation: e.target.rotation()
+              id: targetNode.id(),
+              className: targetNode.elementType || targetNode.getClassName(),
+              x: targetNode.displayX !== undefined ? targetNode.displayX : targetNode.x(),
+              y: targetNode.displayY !== undefined ? targetNode.displayY : targetNode.y(),
+              width: targetNode.width ? targetNode.width() : 0,
+              height: targetNode.height ? targetNode.height() : 0,
+              rotation: targetNode.rotation()
             }
           })
           
@@ -228,13 +239,18 @@ export default {
           konvaStage.on('dragmove transform', () => {
             if (transformer.nodes().length > 0) {
               const node = transformer.nodes()[0]
+              // For floor shapes being dragged, update display position
+              if (node.elementType === 'floor_shape' && node.displayX !== undefined) {
+                // Floor shape display position doesn't change with drag
+                // Keep showing the original JSON position
+              }
               selectedObject.value = {
                 id: node.id(),
-                className: node.getClassName(),
-                x: node.x(),
-                y: node.y(),
-                width: node.width() * node.scaleX(),
-                height: node.height() * node.scaleY(),
+                className: node.elementType || node.getClassName(),
+                x: node.displayX !== undefined ? node.displayX : node.x(),
+                y: node.displayY !== undefined ? node.displayY : node.y(),
+                width: node.width ? (node.width() * node.scaleX()) : 0,
+                height: node.height ? (node.height() * node.scaleY()) : 0,
                 rotation: node.rotation()
               }
             }
@@ -289,35 +305,18 @@ export default {
         
         console.log('JSON Data:', jsonData)
         
-        // Calculate offset to normalize coordinates (align to grid origin)
-        let offsetX = 0, offsetY = 0
-        if (jsonData.layers?.floor_shape) {
-          // The SVG transform matrix(1,0,0,1,98,-84) shifts everything by +98x, -84y
-          // We need to account for this transform + the actual content bounds
-          const transform = jsonData.layers.floor_shape.metadata?.original_transform || ''
-          const transformMatch = transform.match(/matrix\(1,0,0,1,([^,]+),([^)]+)\)/)
-          
-          if (transformMatch) {
-            const transformX = parseFloat(transformMatch[1])
-            const transformY = parseFloat(transformMatch[2])
-            
-            if (jsonData.layers.floor_shape.metadata?.geometry?.bounds) {
-              // Use geometry bounds + transform offset
-              offsetX = jsonData.layers.floor_shape.metadata.geometry.bounds.min_x + transformX
-              offsetY = jsonData.layers.floor_shape.metadata.geometry.bounds.min_y + transformY
-            } else {
-              // Fallback to element position
-              offsetX = jsonData.layers.floor_shape.x || 0
-              offsetY = jsonData.layers.floor_shape.y || 0
-            }
-          } else {
-            // No transform found, use element position
-            offsetX = jsonData.layers.floor_shape.x || 0
-            offsetY = jsonData.layers.floor_shape.y || 0
-          }
+        // Calculate floor shape bounds and transform for relative positioning
+        let floorBounds = null
+        let floorTransform = null
+        if (jsonData.layers?.floor_shape?.metadata?.geometry?.bounds) {
+          floorBounds = jsonData.layers.floor_shape.metadata.geometry.bounds
+        }
+        if (jsonData.layers?.floor_shape?.metadata?.transforms?.matrix) {
+          floorTransform = jsonData.layers.floor_shape.metadata.transforms.matrix
         }
         
-        console.log('Calculated offset:', { offsetX, offsetY })
+        console.log('Floor bounds:', floorBounds)
+        console.log('Floor transform matrix:', floorTransform)
         
         let totalElements = 0
         
@@ -354,7 +353,7 @@ export default {
         if (jsonData.layers) {
           // Process floor shape (background) - add first so it's behind everything
           if (jsonData.layers.floor_shape) {
-            const konvaElement = createKonvaFromJSON(jsonData.layers.floor_shape, offsetX, offsetY)
+            const konvaElement = createKonvaFromJSON(jsonData.layers.floor_shape, null, null) // Floor shape doesn't need offset
             if (konvaElement) {
               konvaElement.id('floor-shape-0')
               layers.floor_shape.add(konvaElement)
@@ -366,7 +365,7 @@ export default {
           // Process server racks
           if (jsonData.layers.server_racks) {
             jsonData.layers.server_racks.forEach((element, index) => {
-              const konvaElement = createKonvaFromJSON(element, offsetX, offsetY)
+              const konvaElement = createKonvaFromJSON(element, floorBounds, floorTransform)
               if (konvaElement) {
                 konvaElement.id(`server-rack-${index}`)
                 layers.server_racks.add(konvaElement)
@@ -378,7 +377,7 @@ export default {
           // Process cooling units
           if (jsonData.layers.cooling_units) {
             jsonData.layers.cooling_units.forEach((element, index) => {
-              const konvaElement = createKonvaFromJSON(element, offsetX, offsetY)
+              const konvaElement = createKonvaFromJSON(element, floorBounds, floorTransform)
               if (konvaElement) {
                 konvaElement.id(`cooling-unit-${index}`)
                 layers.cooling_units.add(konvaElement)
@@ -390,7 +389,7 @@ export default {
           // Process cooling tiles
           if (jsonData.layers.cooling_tiles) {
             jsonData.layers.cooling_tiles.forEach((element, index) => {
-              const konvaElement = createKonvaFromJSON(element, offsetX, offsetY)
+              const konvaElement = createKonvaFromJSON(element, floorBounds, floorTransform)
               if (konvaElement) {
                 konvaElement.id(`cooling-tile-${index}`)
                 layers.cooling_tiles.add(konvaElement)
@@ -402,7 +401,7 @@ export default {
           // Process PDUs/PPCs
           if (jsonData.layers.pdu_ppc) {
             jsonData.layers.pdu_ppc.forEach((element, index) => {
-              const konvaElement = createKonvaFromJSON(element, offsetX, offsetY)
+              const konvaElement = createKonvaFromJSON(element, floorBounds, floorTransform)
               if (konvaElement) {
                 konvaElement.id(`pdu-ppc-${index}`)
                 layers.pdu_ppc.add(konvaElement)
@@ -445,22 +444,26 @@ export default {
     
     
     
-    // Transform SVG path data by offsetting coordinates
-    const transformPathData = (pathData, offsetX, offsetY) => {
-      return pathData.replace(/([ML])\s*([0-9.-]+)\s+([0-9.-]+)/g, (_, command, x, y) => {
-        const newX = parseFloat(x) + offsetX
-        const newY = parseFloat(y) + offsetY
-        return `${command}${newX} ${newY}`
-      })
-    }
 
     // Create Konva element from JSON object
-    const createKonvaFromJSON = (jsonElement, offsetX = 0, offsetY = 0) => {
+    const createKonvaFromJSON = (jsonElement, floorBounds = null, floorTransform = null) => {
       try {
+        // Calculate relative position if floor bounds are available and this isn't the floor shape
+        let relativeX = jsonElement.x || 0
+        let relativeY = jsonElement.y || 0
+        
+        if (floorBounds && floorTransform && jsonElement.type !== 'floor_shape') {
+          // Use empirical working values for accurate positioning
+          relativeX = (jsonElement.x || 0) 
+          relativeY = (jsonElement.y || 0) 
+          
+          console.log(`Element ${jsonElement.type}: original (${jsonElement.x}, ${jsonElement.y}) -> relative (${relativeX}, ${relativeY})`)
+        }
+        
         const konvaProps = {
           id: jsonElement.id,
-          x: (jsonElement.x || 0) -250,
-          y: (jsonElement.y || 0),
+          x: relativeX,
+          y: relativeY,
           width: jsonElement.width || 0,
           height: jsonElement.height || 0,
           fill: jsonElement.fill || 'transparent',
@@ -519,30 +522,35 @@ export default {
               const pathShapes = shapes.filter(shape => shape.type === 'path' && shape.data)
               
               if (pathShapes.length > 0) {
+                // For floor shape, the path data already contains the absolute positioning
+                // We should place the group at 0,0 and let the path data define the shape location
+                
                 // Create a group to hold complex path shapes
                 konvaElement = new Konva.Group({
                   id: jsonElement.id,
-                  x: 0,  // Let path data handle positioning
-                  y: 0,  // Let path data handle positioning
+                  x: 0,  // Floor shape at origin, path data handles positioning
+                  y: 0,
                   opacity: jsonElement.opacity || 0.3,
-                  draggable: false,  // Floor shouldn't be draggable
-                  listening: false   // Floor shouldn't capture clicks
+                  draggable: true,  // Make floor draggable
+                  listening: true   // Make floor clickable
                 })
+                
+                // Store dimensions and position as custom properties for display
+                konvaElement.width = () => jsonElement.width || 0
+                konvaElement.height = () => jsonElement.height || 0
+                // Store the actual floor position from JSON for display
+                konvaElement.displayX = jsonElement.x
+                konvaElement.displayY = jsonElement.y
                 
                 // Add each path shape to the group
                 pathShapes.forEach((shape) => {
-                  // Transform path data to offset coordinates
-                  let transformedPathData = shape.data
-                  if (offsetX !== 0 || offsetY !== 0) {
-                    // Apply offset transformation to path data
-                    transformedPathData = transformPathData(shape.data, -offsetX, -offsetY)
-                  }
-                  
+                  // Use original path data without any transformation
                   const pathElement = new Konva.Path({
-                    data: transformedPathData,
+                    data: shape.data,
                     fill: shape.fill || jsonElement.fill || 'silver',
                     stroke: shape.stroke || jsonElement.stroke || 'silver',
-                    strokeWidth: shape.stroke_width || jsonElement.strokeWidth || 2
+                    strokeWidth: shape.stroke_width || jsonElement.strokeWidth || 2,
+                    listening: false  // Prevent child paths from capturing clicks
                   })
                   konvaElement.add(pathElement)
                 })
@@ -553,8 +561,8 @@ export default {
                   fill: jsonElement.fill || 'silver',
                   stroke: jsonElement.stroke || 'silver',
                   opacity: jsonElement.opacity || 0.3,
-                  draggable: false,
-                  listening: false
+                  draggable: true,
+                  listening: true
                 })
               }
             } else {
@@ -564,8 +572,8 @@ export default {
                 fill: jsonElement.fill || 'silver',
                 stroke: jsonElement.stroke || 'silver',
                 opacity: jsonElement.opacity || 0.3,
-                draggable: false,
-                listening: false
+                draggable: true,
+                listening: true
               })
             }
             break
@@ -584,6 +592,9 @@ export default {
           konvaElement.metadata = jsonElement.metadata
         }
         
+        // Store element type for proper display
+        konvaElement.elementType = jsonElement.type || 'Unknown'
+        
         // Add click handler for selection
         konvaElement.on('click', () => {
           const elementType = jsonElement.type || 'Unknown'
@@ -597,10 +608,10 @@ export default {
           selectedObject.value = {
             id: elementId,
             className: elementType,
-            x: konvaElement.x(),
-            y: konvaElement.y(),
-            width: konvaElement.width(),
-            height: konvaElement.height(),
+            x: konvaElement.displayX !== undefined ? konvaElement.displayX : konvaElement.x(),
+            y: konvaElement.displayY !== undefined ? konvaElement.displayY : konvaElement.y(),
+            width: konvaElement.width ? konvaElement.width() : 0,
+            height: konvaElement.height ? konvaElement.height() : 0,
             rotation: konvaElement.rotation()
           }
         })

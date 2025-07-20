@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Interactive Floor Plan - Fabric.js Grouped Elements</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 20px;
+        }
+        
+        .controls {
+            padding: 20px;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .controls button {
+            padding: 8px 16px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .controls button:hover {
+            background: #2980b9;
+        }
+        
+        .controls button.active {
+            background: #27ae60;
+        }
+        
+        .controls label {
+            margin-left: 20px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        #canvas-container {
+            position: relative;
+            width: 100%;
+            height: 600px;
+            overflow: hidden;
+            background: #f8f8f8;
+        }
+        
+        #fabric-canvas {
+            border: 1px solid #ddd;
+        }
+        
+        #info-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            min-width: 200px;
+            max-width: 300px;
+            z-index: 1000;
+        }
+        
+        #info-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: #2c3e50;
+        }
+        
+        #info-panel p {
+            margin: 5px 0;
+            font-size: 14px;
+            color: #555;
+        }
+        
+        #info-panel .highlight {
+            background: #e8f4f8;
+            padding: 2px 4px;
+            border-radius: 2px;
+            font-family: monospace;
+        }
+        
+        .layer-control {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin: 5px 0;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #666;
+        }
+        
+        .error {
+            text-align: center;
+            padding: 50px;
+            color: #e74c3c;
+        }
+        
+        input[type="file"] {
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        .zoom-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-left: 20px;
+        }
+        
+        .zoom-label {
+            font-size: 14px;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Interactive Floor Plan Viewer - Fabric.js</h1>
+            <p>Click on any element to see its details. Drag elements to reposition them.</p>
+        </div>
+        
+        <div class="controls">
+            <input type="file" id="file-input" accept=".json">
+            <button onclick="loadDefaultFile()">Load Example</button>
+            <button onclick="resetView()">Reset View</button>
+            <button onclick="toggleSelection()" id="selection-toggle">Disable Selection</button>
+            <button onclick="exportCanvas()">Export as Image</button>
+            
+            <div class="zoom-controls">
+                <button onclick="zoomIn()">+</button>
+                <span class="zoom-label" id="zoom-label">100%</span>
+                <button onclick="zoomOut()">-</button>
+            </div>
+            
+            <div style="margin-left: auto; display: flex; gap: 10px;">
+                <label class="layer-control">
+                    <input type="checkbox" checked onchange="toggleLayer('floor_shape', this.checked)">
+                    Floor Shape
+                </label>
+                <label class="layer-control">
+                    <input type="checkbox" checked onchange="toggleLayer('structural', this.checked)">
+                    Structural
+                </label>
+                <label class="layer-control">
+                    <input type="checkbox" checked onchange="toggleLayer('server_racks', this.checked)">
+                    Server Racks
+                </label>
+                <label class="layer-control">
+                    <input type="checkbox" checked onchange="toggleLayer('cooling_units', this.checked)">
+                    Cooling Units
+                </label>
+                <label class="layer-control">
+                    <input type="checkbox" checked onchange="toggleLayer('cooling_tiles', this.checked)">
+                    Cooling Tiles
+                </label>
+                <label class="layer-control">
+                    <input type="checkbox" checked onchange="toggleLayer('pdu_ppc', this.checked)">
+                    PDUs/PPCs
+                </label>
+            </div>
+        </div>
+        
+        <div id="canvas-container">
+            <canvas id="fabric-canvas"></canvas>
+            <div id="info-panel" style="display: none;">
+                <h3>Element Information</h3>
+                <p><strong>Type:</strong> <span id="info-type" class="highlight">-</span></p>
+                <p><strong>ID:</strong> <span id="info-id" class="highlight">-</span></p>
+                <p><strong>Name:</strong> <span id="info-name" class="highlight">-</span></p>
+                <p><strong>Layer:</strong> <span id="info-layer" class="highlight">-</span></p>
+                <p><strong>Position:</strong> <span id="info-position" class="highlight">-</span></p>
+                <p><strong>Size:</strong> <span id="info-size" class="highlight">-</span></p>
+                <p><strong>Objects:</strong> <span id="info-objects" class="highlight">-</span></p>
+            </div>
+        </div>
+        
+        <div class="loading" id="loading">
+            Loading floor plan...
+        </div>
+        
+        <div class="error" id="error" style="display: none;">
+            Error loading floor plan. Please check the file format.
+        </div>
+    </div>
+
+    <script>
+        let canvas = null;
+        let selectedObject = null;
+        let isSelectionEnabled = true;
+        let currentZoom = 1;
+        let layerVisibility = {
+            'floor_shape': true,
+            'structural': true,
+            'server_racks': true,
+            'cooling_units': true,
+            'cooling_tiles': true,
+            'pdu_ppc': true
+        };
+
+        // Initialize file input
+        document.getElementById('file-input').addEventListener('change', handleFileSelect);
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        loadFloorPlan(data);
+                    } catch (error) {
+                        showError('Invalid JSON file: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+        }
+
+        function loadDefaultFile() {
+            showError('Please select a JSON file generated by svg_to_fabric_grouped.py');
+        }
+
+        function loadFloorPlan(data) {
+            try {
+                // Hide loading and error messages
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'none';
+                document.getElementById('canvas-container').style.display = 'block';
+
+                // Clear existing canvas
+                if (canvas) {
+                    canvas.dispose();
+                }
+
+                // Create Fabric canvas
+                const container = document.getElementById('canvas-container');
+                const containerRect = container.getBoundingClientRect();
+                
+                canvas = new fabric.Canvas('fabric-canvas', {
+                    width: containerRect.width - 2,
+                    height: 598,
+                    backgroundColor: '#f8f8f8',
+                    selection: true
+                });
+
+                // Load canvas data
+                if (data.canvas) {
+                    loadCanvasFromJSON(data.canvas);
+                } else {
+                    showError('Invalid floor plan data structure');
+                }
+
+                // Add event handlers
+                addEventHandlers();
+
+                // Fit to screen
+                fitToScreen();
+
+            } catch (error) {
+                console.error('Error loading floor plan:', error);
+                showError('Error loading floor plan: ' + error.message);
+            }
+        }
+
+        function loadCanvasFromJSON(canvasData) {
+            // Set canvas dimensions
+            if (canvasData.width && canvasData.height) {
+                canvas.setWidth(canvasData.width);
+                canvas.setHeight(canvasData.height);
+            }
+
+            // Load objects
+            if (canvasData.objects) {
+                canvasData.objects.forEach(objData => {
+                    createFabricObject(objData).then(obj => {
+                        if (obj) {
+                            canvas.add(obj);
+                        }
+                    });
+                });
+            }
+
+            // Render canvas
+            canvas.renderAll();
+        }
+
+        async function createFabricObject(objData) {
+            const type = objData.type;
+            let obj = null;
+
+            try {
+                switch (type) {
+                    case 'group':
+                        // Create child objects first
+                        const childObjects = [];
+                        if (objData.objects) {
+                            for (const childData of objData.objects) {
+                                const child = await createFabricObject(childData);
+                                if (child) {
+                                    childObjects.push(child);
+                                }
+                            }
+                        }
+                        
+                        // Create group
+                        obj = new fabric.Group(childObjects, {
+                            left: objData.left || 0,
+                            top: objData.top || 0,
+                            angle: objData.angle || 0,
+                            opacity: objData.opacity || 1,
+                            selectable: objData.selectable !== false,
+                            evented: objData.evented !== false,
+                            hasControls: objData.hasControls !== false,
+                            hasBorders: objData.hasBorders !== false
+                        });
+                        break;
+
+                    case 'rect':
+                        obj = new fabric.Rect({
+                            left: objData.left || 0,
+                            top: objData.top || 0,
+                            width: objData.width || 50,
+                            height: objData.height || 50,
+                            fill: objData.fill || '#000',
+                            stroke: objData.stroke,
+                            strokeWidth: objData.strokeWidth || 0,
+                            angle: objData.angle || 0,
+                            opacity: objData.opacity || 1
+                        });
+                        break;
+
+                    case 'circle':
+                        obj = new fabric.Circle({
+                            left: objData.left || 0,
+                            top: objData.top || 0,
+                            radius: objData.radius || 25,
+                            fill: objData.fill || '#000',
+                            stroke: objData.stroke,
+                            strokeWidth: objData.strokeWidth || 0,
+                            angle: objData.angle || 0,
+                            opacity: objData.opacity || 1
+                        });
+                        break;
+
+                    case 'line':
+                        obj = new fabric.Line([objData.x1 || 0, objData.y1 || 0, objData.x2 || 100, objData.y2 || 100], {
+                            stroke: objData.stroke || '#000',
+                            strokeWidth: objData.strokeWidth || 1,
+                            opacity: objData.opacity || 1
+                        });
+                        break;
+
+                    case 'path':
+                        if (objData.path) {
+                            // Convert path array back to string
+                            let pathString = '';
+                            objData.path.forEach(cmd => {
+                                pathString += cmd.join(' ') + ' ';
+                            });
+                            
+                            obj = new fabric.Path(pathString, {
+                                left: objData.left || 0,
+                                top: objData.top || 0,
+                                fill: objData.fill || null,
+                                stroke: objData.stroke,
+                                strokeWidth: objData.strokeWidth || 0,
+                                angle: objData.angle || 0,
+                                opacity: objData.opacity || 1
+                            });
+                        }
+                        break;
+
+                    case 'text':
+                        obj = new fabric.Text(objData.text || '', {
+                            left: objData.left || 0,
+                            top: objData.top || 0,
+                            fontSize: objData.fontSize || 12,
+                            fontFamily: objData.fontFamily || 'Arial',
+                            fill: objData.fill || '#000',
+                            angle: objData.angle || 0,
+                            opacity: objData.opacity || 1
+                        });
+                        break;
+                }
+
+                // Add custom properties
+                if (obj) {
+                    obj.id = objData.id || '';
+                    obj.name = objData.name || '';
+                    obj.layer = objData.layer || 'other';
+                    obj.elementType = objData.elementType;
+                    
+                    // Set visibility based on layer
+                    if (layerVisibility[obj.layer] === false) {
+                        obj.visible = false;
+                    }
+                }
+
+            } catch (error) {
+                console.error('Error creating object:', error, objData);
+            }
+
+            return obj;
+        }
+
+        function addEventHandlers() {
+            // Selection events
+            canvas.on('selection:created', function(e) {
+                if (e.selected && e.selected.length === 1) {
+                    selectObject(e.selected[0]);
+                }
+            });
+
+            canvas.on('selection:updated', function(e) {
+                if (e.selected && e.selected.length === 1) {
+                    selectObject(e.selected[0]);
+                }
+            });
+
+            canvas.on('selection:cleared', function() {
+                deselectObject();
+            });
+
+            // Object modification events
+            canvas.on('object:modified', function(e) {
+                if (e.target) {
+                    updateInfoPanel(e.target);
+                }
+            });
+
+            // Mouse wheel zoom
+            canvas.on('mouse:wheel', function(opt) {
+                const delta = opt.e.deltaY;
+                let zoom = canvas.getZoom();
+                zoom *= 0.999 ** delta;
+                if (zoom > 20) zoom = 20;
+                if (zoom < 0.01) zoom = 0.01;
+                
+                canvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
+                currentZoom = zoom;
+                updateZoomLabel();
+                
+                opt.e.preventDefault();
+                opt.e.stopPropagation();
+            });
+
+            // Pan with middle mouse button
+            let isPanning = false;
+            let lastPosX, lastPosY;
+
+            canvas.on('mouse:down', function(opt) {
+                if (opt.e.button === 1) { // Middle mouse button
+                    isPanning = true;
+                    lastPosX = opt.e.clientX;
+                    lastPosY = opt.e.clientY;
+                    canvas.selection = false;
+                }
+            });
+
+            canvas.on('mouse:move', function(opt) {
+                if (isPanning) {
+                    const deltaX = opt.e.clientX - lastPosX;
+                    const deltaY = opt.e.clientY - lastPosY;
+                    canvas.relativePan({ x: deltaX, y: deltaY });
+                    lastPosX = opt.e.clientX;
+                    lastPosY = opt.e.clientY;
+                }
+            });
+
+            canvas.on('mouse:up', function(opt) {
+                isPanning = false;
+                canvas.selection = isSelectionEnabled;
+            });
+        }
+
+        function selectObject(object) {
+            selectedObject = object;
+            updateInfoPanel(object);
+            document.getElementById('info-panel').style.display = 'block';
+        }
+
+        function deselectObject() {
+            selectedObject = null;
+            document.getElementById('info-panel').style.display = 'none';
+        }
+
+        function updateInfoPanel(object) {
+            document.getElementById('info-type').textContent = object.type || 'Unknown';
+            document.getElementById('info-id').textContent = object.id || 'N/A';
+            document.getElementById('info-name').textContent = object.name || 'N/A';
+            document.getElementById('info-layer').textContent = object.layer || 'N/A';
+            document.getElementById('info-position').textContent = `${Math.round(object.left)}, ${Math.round(object.top)}`;
+            
+            const bounds = object.getBoundingRect();
+            document.getElementById('info-size').textContent = `${Math.round(bounds.width)} x ${Math.round(bounds.height)}`;
+            
+            if (object.type === 'group' && object._objects) {
+                document.getElementById('info-objects').textContent = object._objects.length;
+            } else {
+                document.getElementById('info-objects').textContent = 'N/A';
+            }
+        }
+
+        function toggleLayer(layerName, visible) {
+            layerVisibility[layerName] = visible;
+            
+            canvas.getObjects().forEach(obj => {
+                if (obj.layer === layerName) {
+                    obj.visible = visible;
+                }
+            });
+            
+            canvas.renderAll();
+        }
+
+        function toggleSelection() {
+            isSelectionEnabled = !isSelectionEnabled;
+            canvas.selection = isSelectionEnabled;
+            
+            // Update all objects
+            canvas.getObjects().forEach(obj => {
+                obj.selectable = isSelectionEnabled;
+                obj.evented = isSelectionEnabled;
+            });
+            
+            // Update button text
+            document.getElementById('selection-toggle').textContent = isSelectionEnabled ? 'Disable Selection' : 'Enable Selection';
+            document.getElementById('selection-toggle').classList.toggle('active', !isSelectionEnabled);
+            
+            canvas.renderAll();
+        }
+
+        function resetView() {
+            if (canvas) {
+                canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+                currentZoom = 1;
+                updateZoomLabel();
+                canvas.renderAll();
+            }
+        }
+
+        function zoomIn() {
+            if (canvas) {
+                const zoom = canvas.getZoom() * 1.1;
+                canvas.setZoom(zoom);
+                currentZoom = zoom;
+                updateZoomLabel();
+                canvas.renderAll();
+            }
+        }
+
+        function zoomOut() {
+            if (canvas) {
+                const zoom = canvas.getZoom() * 0.9;
+                canvas.setZoom(zoom);
+                currentZoom = zoom;
+                updateZoomLabel();
+                canvas.renderAll();
+            }
+        }
+
+        function updateZoomLabel() {
+            document.getElementById('zoom-label').textContent = Math.round(currentZoom * 100) + '%';
+        }
+
+        function fitToScreen() {
+            if (!canvas) return;
+            
+            const container = document.getElementById('canvas-container');
+            const containerRect = container.getBoundingClientRect();
+            
+            // Get canvas dimensions
+            const canvasWidth = canvas.getWidth();
+            const canvasHeight = canvas.getHeight();
+            
+            // Calculate scale to fit
+            const scaleX = (containerRect.width - 20) / canvasWidth;
+            const scaleY = (containerRect.height - 20) / canvasHeight;
+            const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in more than 100%
+            
+            canvas.setZoom(scale);
+            currentZoom = scale;
+            updateZoomLabel();
+            
+            // Center the canvas
+            canvas.centerObject(new fabric.Rect({
+                left: 0,
+                top: 0,
+                width: canvasWidth,
+                height: canvasHeight,
+                fill: 'transparent'
+            }));
+            
+            canvas.renderAll();
+        }
+
+        function exportCanvas() {
+            if (!canvas) return;
+            
+            // Export as PNG
+            const dataURL = canvas.toDataURL({
+                format: 'png',
+                quality: 1,
+                multiplier: 2 // Higher resolution
+            });
+            
+            // Create download link
+            const link = document.createElement('a');
+            link.download = 'floor_plan.png';
+            link.href = dataURL;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function showError(message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('canvas-container').style.display = 'none';
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error').textContent = message;
+        }
+
+        // Hide loading message initially
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('canvas-container').style.display = 'none';
+    </script>
+</body>
+</html>
