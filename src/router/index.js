@@ -4,6 +4,7 @@ import Regions from "../views/regions/index.vue";
 import Sites from "../views/sites/index.vue";
 import Floors from "../views/floors/index.vue";
 import FloorPlan from "../views/floor-plan/index.vue";
+import FloorPlanFabric from "../views/floor-plan/fabricjs-version.vue";
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -41,6 +42,11 @@ const router = createRouter({
       path: "/floor-plan-new/:id",
       name: "floor-plan-new",
       component: FloorPlan
+    },
+    {
+      path: "/floor-plan-fabric/:id",
+      name: "floor-plan-fabric",
+      component: FloorPlanFabric
     }
   ]
 });

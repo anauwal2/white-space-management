@@ -19,8 +19,13 @@
   "license": "ISC",
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.0",
+    "@svgdotjs/svg.draggable.js": "^3.0.6",
+    "@svgdotjs/svg.js": "^3.2.4",
+    "@svgdotjs/svg.panzoom.js": "^2.1.2",
     "element-plus": "^2.4.0",
+    "fabric": "^5.3.0",
     "konva": "^9.3.22",
+    "svg.js": "^2.7.1",
     "vue": "^3.4.0",
     "vue-konva": "^3.2.2",
     "vue-router": "^4.2.0"

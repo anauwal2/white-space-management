@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fabric.js Floor Plan Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+            height: calc(100vh - 40px);
+        }
+        .canvas-container {
+            flex: 1;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .controls {
+            width: 300px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        .control-group {
+            margin-bottom: 20px;
+        }
+        .control-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        button {
+            background: #409eff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 8px;
+            margin-bottom: 8px;
+        }
+        button:hover {
+            background: #66b1ff;
+        }
+        button.danger {
+            background: #f56c6c;
+        }
+        button.danger:hover {
+            background: #f78989;
+        }
+        input[type="file"] {
+            margin-bottom: 10px;
+        }
+        input[type="number"], input[type="color"] {
+            width: 100%;
+            padding: 4px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        #fabricCanvas {
+            border: 1px solid #eee;
+        }
+        .status {
+            font-size: 14px;
+            color: #666;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="canvas-container">
+            <canvas id="fabricCanvas" width="800" height="600"></canvas>
+        </div>
+        
+        <div class="controls">
+            <h3>Fabric.js Floor Plan Demo</h3>
+            
+            <div class="control-group">
+                <label>Import SVG:</label>
+                <input type="file" id="svgFile" accept=".svg">
+                <button onclick="clearCanvas()" class="danger">Clear Canvas</button>
+            </div>
+            
+            <div class="control-group">
+                <label>Grid Settings:</label>
+                <label><input type="checkbox" id="showGrid" checked onchange="toggleGrid()"> Show Grid</label>
+                <label><input type="checkbox" id="showCoords" checked onchange="updateGrid()"> Show Coordinates</label>
+                <br><br>
+                <label>Grid Size: <input type="number" id="gridSize" value="36" min="10" max="100" onchange="updateGrid()"></label>
+                <br><br>
+                <label>Grid Color: <input type="color" id="gridColor" value="#dddddd" onchange="updateGrid()"></label>
+            </div>
+            
+            <div class="control-group">
+                <label>Zoom Controls:</label>
+                <button onclick="zoomIn()">Zoom In</button>
+                <button onclick="zoomOut()">Zoom Out</button>
+                <button onclick="resetZoom()">Reset</button>
+                <button onclick="fitToScreen()">Fit</button>
+            </div>
+            
+            <div class="control-group">
+                <label>Pan Mode:</label>
+                <small>Hold Alt + drag to pan, or use mouse wheel to zoom</small>
+            </div>
+            
+            <div class="status">
+                <div>Objects: <span id="objectCount">0</span></div>
+                <div>Zoom: <span id="zoomLevel">100%</span></div>
+                <div>Status: <span id="status">Ready</span></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+    <script>
+        let canvas;
+        let gridGroup = null;
+        let coordinateLabels = { top: [], bottom: [], left: [], right: [] };
+        
+        // Initialize Fabric.js canvas
+        function initCanvas() {
+            canvas = new fabric.Canvas('fabricCanvas', {
+                backgroundColor: '#ffffff'
+            });
+            
+            // Mouse wheel zoom
+            canvas.on('mouse:wheel', function(opt) {
+                const delta = opt.e.deltaY;
+                let zoom = canvas.getZoom();
+                zoom *= 0.999 ** delta;
+                if (zoom > 20) zoom = 20;
+                if (zoom < 0.01) zoom = 0.01;
+                canvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
+                updateZoomLevel();
+                opt.e.preventDefault();
+                opt.e.stopPropagation();
+            });
+            
+            // Pan functionality
+            let isPanning = false;
+            canvas.on('mouse:down', function(opt) {
+                if (opt.e.altKey) {
+                    isPanning = true;
+                    canvas.selection = false;
+                }
+            });
+            
+            canvas.on('mouse:move', function(opt) {
+                if (isPanning) {
+                    const vpt = canvas.viewportTransform;
+                    vpt[4] += opt.e.movementX;
+                    vpt[5] += opt.e.movementY;
+                    canvas.requestRenderAll();
+                }
+            });
+            
+            canvas.on('mouse:up', function(opt) {
+                isPanning = false;
+                canvas.selection = true;
+            });
+            
+            // Track object count
+            canvas.on('object:added', updateObjectCount);
+            canvas.on('object:removed', updateObjectCount);
+            
+            generateGrid();
+        }
+        
+        // SVG import functionality
+        document.getElementById('svgFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file && file.type === 'image/svg+xml') {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const svgString = event.target.result;
+                    updateStatus('Loading SVG...');
+                    
+                    // Extract coordinate labels
+                    extractCoordinateLabels(svgString);
+                    
+                    // Clean SVG (remove coordinate text elements)
+                    const cleanedSVG = removeCoordinateLabels(svgString);
+                    
+                    // Load into Fabric.js
+                    fabric.loadSVGFromString(cleanedSVG, function(objects, options) {
+                        const svgGroup = fabric.util.groupSVGElements(objects, options);
+                        
+                        // Clear canvas except grid
+                        clearCanvasExceptGrid();
+                        
+                        // Add SVG group
+                        svgGroup.set({
+                            left: 50,
+                            top: 50,
+                            selectable: true
+                        });
+                        
+                        canvas.add(svgGroup);
+                        canvas.renderAll();
+                        
+                        // Regenerate grid based on coordinates
+                        generateGrid();
+                        
+                        // Fit to screen
+                        setTimeout(fitToScreen, 100);
+                        
+                        updateStatus('SVG loaded successfully');
+                    });
+                };
+                reader.readAsText(file);
+            }
+        });
+        
+        function extractCoordinateLabels(svgText) {
+            coordinateLabels = { top: [], bottom: [], left: [], right: [] };
+            
+            // Extract column labels (letters)
+            const columnRegex = /<text[^>]*x="([^"]*)"[^>]*y="([^"]*)"[^>]*>([A-Z][A-Z])<\/text>/g;
+            let match;
+            
+            while ((match = columnRegex.exec(svgText)) !== null) {
+                const x = parseFloat(match[1]) + 98; // Transform offset
+                const y = parseFloat(match[2]) - 84;
+                const label = match[3];
+                
+                if (y < 200) {
+                    coordinateLabels.top.push({ x, y, label });
+                } else if (y > 1300) {
+                    coordinateLabels.bottom.push({ x, y, label });
+                }
+            }
+            
+            // Extract row labels (numbers)
+            const rowRegex = /<text[^>]*x="([^"]*)"[^>]*y="([^"]*)"[^>]*>(\d{1,2})<\/text>/g;
+            
+            while ((match = rowRegex.exec(svgText)) !== null) {
+                const x = parseFloat(match[1]) + 98;
+                const y = parseFloat(match[2]) - 84;
+                const label = match[3];
+                
+                if (x < 200) {
+                    coordinateLabels.left.push({ x, y, label });
+                } else if (x > 3400) {
+                    coordinateLabels.right.push({ x, y, label });
+                }
+            }
+            
+            // Sort coordinates
+            coordinateLabels.top.sort((a, b) => a.x - b.x);
+            coordinateLabels.bottom.sort((a, b) => a.x - b.x);
+            coordinateLabels.left.sort((a, b) => b.y - a.y);
+            coordinateLabels.right.sort((a, b) => b.y - a.y);
+        }
+        
+        function removeCoordinateLabels(svgText) {
+            const patterns = [
+                /<text[^>]*x="[^"]*"\s+y="164"[^>]*>[A-Z][A-Z]<\/text>/g,
+                /<text[^>]*y="164"\s+x="[^"]*"[^>]*>[A-Z][A-Z]<\/text>/g,
+                /<text[^>]*x="-?\d+"\s+y="[^"]*"[^>]*>\d{1,2}<\/text>/g,
+                /<text[^>]*y="[^"]*"\s+x="-?\d+"[^>]*>\d{1,2}<\/text>/g
+            ];
+            
+            return patterns.reduce((text, pattern) => text.replace(pattern, ''), svgText);
+        }
+        
+        function generateGrid() {
+            if (gridGroup) {
+                canvas.remove(gridGroup);
+            }
+            
+            if (!document.getElementById('showGrid').checked) return;
+            
+            const gridLines = [];
+            const labels = [];
+            const gridSize = parseInt(document.getElementById('gridSize').value);
+            const gridColor = document.getElementById('gridColor').value;
+            const showCoords = document.getElementById('showCoords').checked;
+            
+            // Generate grid based on extracted coordinates or regular grid
+            if (coordinateLabels.top.length > 0 || coordinateLabels.left.length > 0) {
+                generateCoordinateBasedGrid(gridLines, labels, gridColor, showCoords);
+            } else {
+                generateRegularGrid(gridLines, labels, gridSize, gridColor, showCoords);
+            }
+            
+            if (gridLines.length > 0 || labels.length > 0) {
+                gridGroup = new fabric.Group([...gridLines, ...labels], {
+                    selectable: false,
+                    evented: false,
+                    excludeFromExport: true
+                });
+                
+                canvas.add(gridGroup);
+                canvas.sendToBack(gridGroup);
+            }
+            
+            canvas.renderAll();
+        }
+        
+        function generateCoordinateBasedGrid(gridLines, labels, gridColor, showCoords) {
+            const offset = { x: 50, y: 50 };
+            
+            // Vertical lines from column coordinates
+            coordinateLabels.top.concat(coordinateLabels.bottom).forEach(coord => {
+                const x = coord.x + offset.x;
+                if (x > 0 && x < canvas.width) {
+                    const line = new fabric.Line([x, 0, x, canvas.height], {
+                        stroke: gridColor,
+                        strokeWidth: 1,
+                        strokeDashArray: [5, 5],
+                        selectable: false,
+                        evented: false
+                    });
+                    gridLines.push(line);
+                    
+                    if (showCoords) {
+                        const label = new fabric.Text(coord.label, {
+                            left: x - 8,
+                            top: 5,
+                            fontSize: 11,
+                            fill: '#666',
+                            selectable: false,
+                            evented: false
+                        });
+                        labels.push(label);
+                    }
+                }
+            });
+            
+            // Horizontal lines from row coordinates
+            coordinateLabels.left.concat(coordinateLabels.right).forEach(coord => {
+                const y = coord.y + offset.y;
+                if (y > 0 && y < canvas.height) {
+                    const line = new fabric.Line([0, y, canvas.width, y], {
+                        stroke: gridColor,
+                        strokeWidth: 1,
+                        strokeDashArray: [5, 5],
+                        selectable: false,
+                        evented: false
+                    });
+                    gridLines.push(line);
+                    
+                    if (showCoords) {
+                        const label = new fabric.Text(coord.label, {
+                            left: 5,
+                            top: y - 8,
+                            fontSize: 11,
+                            fill: '#666',
+                            selectable: false,
+                            evented: false
+                        });
+                        labels.push(label);
+                    }
+                }
+            });
+        }
+        
+        function generateRegularGrid(gridLines, labels, gridSize, gridColor, showCoords) {
+            // Vertical lines
+            for (let x = 0; x <= canvas.width; x += gridSize) {
+                const line = new fabric.Line([x, 0, x, canvas.height], {
+                    stroke: gridColor,
+                    strokeWidth: 1,
+                    strokeDashArray: [5, 5],
+                    selectable: false,
+                    evented: false
+                });
+                gridLines.push(line);
+                
+                if (showCoords && x > 0) {
+                    const colIndex = Math.floor(x / gridSize);
+                    const colLabel = String.fromCharCode(65 + (colIndex - 1) % 26) + 
+                                   String.fromCharCode(65 + Math.floor((colIndex - 1) / 26));
+                    const label = new fabric.Text(colLabel, {
+                        left: x - 10,
+                        top: 5,
+                        fontSize: 10,
+                        fill: '#666',
+                        selectable: false,
+                        evented: false
+                    });
+                    labels.push(label);
+                }
+            }
+            
+            // Horizontal lines
+            for (let y = 0; y <= canvas.height; y += gridSize) {
+                const line = new fabric.Line([0, y, canvas.width, y], {
+                    stroke: gridColor,
+                    strokeWidth: 1,
+                    strokeDashArray: [5, 5],
+                    selectable: false,
+                    evented: false
+                });
+                gridLines.push(line);
+                
+                if (showCoords && y > 0) {
+                    const rowNumber = Math.floor(y / gridSize);
+                    const label = new fabric.Text(rowNumber.toString().padStart(2, '0'), {
+                        left: 5,
+                        top: y - 6,
+                        fontSize: 10,
+                        fill: '#666',
+                        selectable: false,
+                        evented: false
+                    });
+                    labels.push(label);
+                }
+            }
+        }
+        
+        function toggleGrid() {
+            generateGrid();
+        }
+        
+        function updateGrid() {
+            generateGrid();
+        }
+        
+        function clearCanvas() {
+            canvas.clear();
+            coordinateLabels = { top: [], bottom: [], left: [], right: [] };
+            generateGrid();
+            updateStatus('Canvas cleared');
+        }
+        
+        function clearCanvasExceptGrid() {
+            const objects = canvas.getObjects();
+            objects.forEach(obj => {
+                if (obj !== gridGroup) {
+                    canvas.remove(obj);
+                }
+            });
+        }
+        
+        function zoomIn() {
+            const zoom = canvas.getZoom();
+            canvas.setZoom(zoom * 1.2);
+            updateZoomLevel();
+        }
+        
+        function zoomOut() {
+            const zoom = canvas.getZoom();
+            canvas.setZoom(zoom / 1.2);
+            updateZoomLevel();
+        }
+        
+        function resetZoom() {
+            canvas.setZoom(1);
+            canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+            canvas.renderAll();
+            updateZoomLevel();
+        }
+        
+        function fitToScreen() {
+            const objects = canvas.getObjects().filter(obj => obj !== gridGroup);
+            if (objects.length === 0) return;
+            
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            
+            objects.forEach(obj => {
+                const bound = obj.getBoundingRect();
+                minX = Math.min(minX, bound.left);
+                minY = Math.min(minY, bound.top);
+                maxX = Math.max(maxX, bound.left + bound.width);
+                maxY = Math.max(maxY, bound.top + bound.height);
+            });
+            
+            const objectWidth = maxX - minX;
+            const objectHeight = maxY - minY;
+            
+            const scaleX = (canvas.width * 0.8) / objectWidth;
+            const scaleY = (canvas.height * 0.8) / objectHeight;
+            const scale = Math.min(scaleX, scaleY);
+            
+            canvas.setZoom(scale);
+            canvas.viewportTransform[4] = (canvas.width - objectWidth * scale) / 2 - minX * scale;
+            canvas.viewportTransform[5] = (canvas.height - objectHeight * scale) / 2 - minY * scale;
+            canvas.renderAll();
+            updateZoomLevel();
+        }
+        
+        function updateObjectCount() {
+            const objects = canvas.getObjects();
+            const count = objects.filter(obj => obj !== gridGroup).length;
+            document.getElementById('objectCount').textContent = count;
+        }
+        
+        function updateZoomLevel() {
+            const zoom = Math.round(canvas.getZoom() * 100);
+            document.getElementById('zoomLevel').textContent = zoom + '%';
+        }
+        
+        function updateStatus(message) {
+            document.getElementById('status').textContent = message;
+        }
+        
+        // Initialize canvas when page loads
+        window.addEventListener('load', initCanvas);
+    </script>
+</body>
+</html>
