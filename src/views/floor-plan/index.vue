@@ -69,28 +69,28 @@
           <div class="control-group">
             <label>Layer Controls:</label>
             <div class="layer-controls">
-              <el-checkbox v-model="layerVisibility['floor-shape']" @change="toggleLayer('floor-shape')">
+              <el-checkbox v-model="showFloorShapeLayer" @change="toggleLayer('floor-shape')">
                 Floor Shape
               </el-checkbox>
-              <el-checkbox v-model="layerVisibility['customer-zones']" @change="toggleLayer('customer-zones')">
+              <el-checkbox v-model="showCustomerZonesLayer" @change="toggleLayer('customer-zones')">
                 Customer Zones
               </el-checkbox>
-              <el-checkbox v-model="layerVisibility['server-racks']" @change="toggleLayer('server-racks')">
+              <el-checkbox v-model="showServerRacksLayer" @change="toggleLayer('server-racks')">
                 Server Racks
               </el-checkbox>
-              <el-checkbox v-model="layerVisibility['cooling-units']" @change="toggleLayer('cooling-units')">
+              <el-checkbox v-model="showCoolingUnitsLayer" @change="toggleLayer('cooling-units')">
                 Cooling Units
               </el-checkbox>
-              <el-checkbox v-model="layerVisibility['cooling-tiles']" @change="toggleLayer('cooling-tiles')">
+              <el-checkbox v-model="showCoolingTilesLayer" @change="toggleLayer('cooling-tiles')">
                 Cooling Tiles
               </el-checkbox>
-              <el-checkbox v-model="layerVisibility['pdu-ppc']" @change="toggleLayer('pdu-ppc')">
+              <el-checkbox v-model="showPDULayer" @change="toggleLayer('pdu-ppc')">
                 PDUs/PPCs
               </el-checkbox>
-              <el-checkbox v-model="layerVisibility['other']" @change="toggleLayer('other')">
+              <el-checkbox v-model="showOtherLayer" @change="toggleLayer('other')">
                 Other Elements
               </el-checkbox>
-              <el-checkbox v-model="layerVisibility['grid']" @change="toggleLayer('grid')">
+              <el-checkbox v-model="showGridLayer" @change="toggleLayer('grid')">
                 Grid & Coordinates
               </el-checkbox>
             </div>
@@ -167,44 +167,10 @@ import { SVG } from '@svgdotjs/svg.js'
 import '@svgdotjs/svg.panzoom.js'
 import '@svgdotjs/svg.draggable.js'
 
-const DEFAULT_VIEWBOX = { width: 3660, height: 1417 }
-const ZOOM_CONFIG = {
-  min: 0.1,
-  max: 10,
-  factor: 0.1,
-  step: 1.2
-}
-const GRID_OFFSET = { x: 13, y: -14 }
-const COORDINATE_TRANSFORM = { x: 0, y: 0 }
-
-const LAYER_TYPES = {
-  FLOOR_SHAPE: 'floor-shape',
-  CUSTOMER_ZONES: 'customer-zones',
-  SERVER_RACKS: 'server-racks',
-  COOLING_UNITS: 'cooling-units',
-  COOLING_TILES: 'cooling-tiles',
-  PDU_PPC: 'pdu-ppc',
-  OTHER: 'other',
-  GRID: 'grid'
-}
-
-const ELEMENT_COLORS = {
-  SILVER: 'silver',
-  BLUE_ZONE: 'rgb(0,120,215)',
-  GRAY_RACK: 'rgb(110,110,110)',
-  RED_RACK: 'rgb(230,0,0)',
-  BLUE_COOLING: 'rgb(62,153,223)',
-  LIGHT_BLUE_COOLING: 'rgb(171,211,241)',
-  GREEN_PDU: 'rgb(103,203,51)',
-  LIGHT_GREEN_PDU: 'rgb(189,232,167)'
-}
-
 export default {
   name: 'FloorPlan',
   setup() {
     const route = useRoute()
-    
-    // Refs
     const svgContainer = ref(null)
     const svgFileInput = ref(null)
     const objectCount = ref(0)
@@ -214,22 +180,19 @@ export default {
     const importStatus = ref('Ready')
     const zoomLevel = ref(1)
     
-    // Layer visibility state
-    const layerVisibility = ref({
-      [LAYER_TYPES.FLOOR_SHAPE]: true,
-      [LAYER_TYPES.CUSTOMER_ZONES]: true,
-      [LAYER_TYPES.SERVER_RACKS]: true,
-      [LAYER_TYPES.COOLING_UNITS]: true,
-      [LAYER_TYPES.COOLING_TILES]: true,
-      [LAYER_TYPES.PDU_PPC]: true,
-      [LAYER_TYPES.OTHER]: true,
-      [LAYER_TYPES.GRID]: true
-    })
+    // Layer visibility controls
+    const showFloorShapeLayer = ref(true)
+    const showCustomerZonesLayer = ref(true)
+    const showServerRacksLayer = ref(true)
+    const showCoolingUnitsLayer = ref(true)
+    const showCoolingTilesLayer = ref(true)
+    const showPDULayer = ref(true)
+    const showOtherLayer = ref(true)
+    const showGridLayer = ref(true)
     const dragEnabled = ref(true)
     
-    // Internal state
     let svgDraw = null
-    let originalSVGContent = null
+    let currentSVGContent = null
     let layerGroups = {}
     let selectedElement = null
     let gridLayer = null
@@ -239,145 +202,119 @@ export default {
       left: [],
       right: []
     }
-    let gridOffset = { x: 0, y: 0 }
     
+    // Initialize SVG.js canvas
     const initSVGCanvas = () => {
       nextTick(() => {
         if (svgContainer.value) {
+          // Create SVG.js drawing area
           svgDraw = SVG().addTo(svgContainer.value).size('100%', '100%')
-          svgDraw.viewbox(0, 0, DEFAULT_VIEWBOX.width, DEFAULT_VIEWBOX.height)
+          svgDraw.viewbox(0, 0, 3660, 1417) // Default viewbox
           
+          // Enable panning and zooming
           svgDraw.panZoom({
-            zoomMin: ZOOM_CONFIG.min,
-            zoomMax: ZOOM_CONFIG.max,
-            zoomFactor: ZOOM_CONFIG.factor
+            zoomMin: 0.1,
+            zoomMax: 10,
+            zoomFactor: 0.1
           })
+          
+          console.log('SVG.js canvas initialized')
         }
       })
     }
 
+    // Trigger SVG file input
     const triggerSVGInput = () => {
       svgFileInput.value?.click()
     }
 
+    // Handle SVG file import
     const handleSVGImport = (event) => {
       const file = event.target.files[0]
-      if (!isValidSVGFile(file)) {
-        ElMessage.error('Please select a valid SVG file')
-        return
-      }
-
-      importStatus.value = 'Reading SVG file...'
-      
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        try {
-          parseSVGContent(e.target.result)
-        } catch (error) {
-          console.error('Error parsing SVG:', error)
-          ElMessage.error('Failed to parse SVG file')
+      if (file && (file.type === 'image/svg+xml' || file.name.endsWith('.svg'))) {
+        importStatus.value = 'Reading SVG file...'
+        
+        const reader = new FileReader()
+        reader.onload = (e) => {
+          try {
+            const svgContent = e.target.result
+            console.log('SVG Content loaded')
+            parseSVGContent(svgContent)
+          } catch (error) {
+            console.error('Error parsing SVG:', error)
+            ElMessage.error('Failed to parse SVG file')
+            importStatus.value = 'Error'
+          }
+        }
+        reader.onerror = () => {
+          ElMessage.error('Failed to read SVG file')
           importStatus.value = 'Error'
         }
+        reader.readAsText(file)
+      } else {
+        ElMessage.error('Please select a valid SVG file')
       }
-      reader.onerror = () => {
-        ElMessage.error('Failed to read SVG file')
-        importStatus.value = 'Error'
-      }
-      reader.readAsText(file)
     }
 
-    const isValidSVGFile = (file) => {
-      return file && (file.type === 'image/svg+xml' || file.name.endsWith('.svg'))
-    }
-
-    const removeCoordinateLabels = (svgText) => {
-      const patterns = [
-        /<text[^>]*x="[^"]*"\s+y="164"[^>]*>[A-Z][A-Z]<\/text>/g,
-        /<text[^>]*y="164"\s+x="[^"]*"[^>]*>[A-Z][A-Z]<\/text>/g,
-        /<text[^>]*x="[^"]*"\s+y="(1[4-9][0-9][0-9]|[2-9][0-9][0-9][0-9])"[^>]*>[A-Z][A-Z]<\/text>/g,
-        /<text[^>]*y="(1[4-9][0-9][0-9]|[2-9][0-9][0-9][0-9])"\s+x="[^"]*"[^>]*>[A-Z][A-Z]<\/text>/g,
-        /<text[^>]*x="-?\d+"\s+y="[^"]*"[^>]*>\d{1,2}<\/text>/g,
-        /<text[^>]*y="[^"]*"\s+x="-?\d+"[^>]*>\d{1,2}<\/text>/g,
-        /<text[^>]*x="([-]?[0-9]{1,2}|3[4-9][0-9][0-9])"[^>]*>\d{1,2}<\/text>/g,
-        /<text[^>]*x="([-]?[0-9]{1,2}|3[4-9][0-9][0-9])"[^>]*>[A-Z][A-Z]<\/text>/g
-      ]
-      
-      return patterns.reduce((text, pattern) => text.replace(pattern, ''), svgText)
-    }
-
-    const parseSVGContent = (svgText, isLoadingFromSave = false) => {
+    // Parse and display SVG content
+    const parseSVGContent = (svgText) => {
       try {
         importStatus.value = 'Loading SVG...'
         
-        if (!validateSVGCanvas()) return
-        
-        svgDraw.clear()
-        
-        const { width, height } = extractSVGDimensions(svgText)
-        const cleanedSVGText = removeCoordinateLabels(svgText)
-        
-        if (!isLoadingFromSave) {
-          originalSVGContent = cleanedSVGText
+        // Clear existing content
+        if (svgDraw) {
+          svgDraw.clear()
         }
         
+        // Parse SVG using DOMParser
+        const parser = new DOMParser()
+        const svgDoc = parser.parseFromString(svgText, 'image/svg+xml')
+        const svgRoot = svgDoc.documentElement
+        
+        // Get SVG dimensions
+        const width = parseFloat(svgRoot.getAttribute('width') || '3660')
+        const height = parseFloat(svgRoot.getAttribute('height') || '1417')
+        
+        console.log('SVG Dimensions:', width, 'x', height)
+        
+        // Update viewbox
         svgDraw.viewbox(0, 0, width, height)
-        svgDraw.svg(cleanedSVGText)
         
-        if (!isLoadingFromSave) {
-          setupGridAndCoordinates(svgText)
-        }
+        // Import the SVG content directly into SVG.js
+        const importedSVG = svgDraw.svg(svgText)
         
+        // Detect coordinate labels from the imported SVG
+        detectCoordinateLabels()
+        
+        // Generate grid based on detected coordinates
+        generateGrid()
+        
+        // Organize elements into layers
         organizeIntoLayers()
+        
+        // Set up interaction
         setupInteractions()
         
-        setTimeout(fitToScreen, 100)
+        // Fit to screen
+        setTimeout(() => {
+          fitToScreen()
+        }, 100)
         
         importStatus.value = 'Complete'
         ElMessage.success('SVG imported successfully')
         
       } catch (error) {
-        handleSVGError(error)
-      }
-    }
-
-    const validateSVGCanvas = () => {
-      if (!svgDraw) {
-        ElMessage.error('SVG canvas not initialized. Please try again.')
+        console.error('Error processing SVG:', error)
+        ElMessage.error('Failed to process SVG: ' + error.message)
         importStatus.value = 'Error'
-        return false
       }
-      return true
     }
 
-    const extractSVGDimensions = (svgText) => {
-      const parser = new DOMParser()
-      const svgDoc = parser.parseFromString(svgText, 'image/svg+xml')
-      const svgRoot = svgDoc.documentElement
+    // Detect coordinate labels from imported SVG
+    const detectCoordinateLabels = () => {
+      if (!svgDraw) return
       
-      return {
-        width: parseFloat(svgRoot.getAttribute('width') || DEFAULT_VIEWBOX.width),
-        height: parseFloat(svgRoot.getAttribute('height') || DEFAULT_VIEWBOX.height)
-      }
-    }
-
-    const setupGridAndCoordinates = (svgText) => {
-      detectCoordinateLabels(svgText)
-      generateGrid()
-      moveGrid(GRID_OFFSET.x, GRID_OFFSET.y)
-      
-      if (gridLayer) {
-        gridLayer.back()
-        gridLayer.addClass('non-draggable')
-      }
-    }
-
-    const handleSVGError = (error) => {
-      console.error('Error processing SVG:', error)
-      ElMessage.error('Failed to process SVG: ' + error.message)
-      importStatus.value = 'Error'
-    }
-
-    const detectCoordinateLabels = (originalSVGText) => {
+      // Reset coordinate labels
       coordinateLabels = {
         top: [],
         bottom: [],
@@ -385,312 +322,150 @@ export default {
         right: []
       }
       
-      extractColumnLabels(originalSVGText)
-      extractRowLabels(originalSVGText)
-      sortCoordinateLabels()
-    }
-
-    const extractColumnLabels = (svgText) => {
-      const columnLabelRegex = /<text[^>]*x="([^"]*)"|[^>]*y="([^"]*)"|[^>]*>([A-Z][A-Z])<\/text>/g
-      let match
+      // Find all text elements
+      const textElements = svgDraw.find('text')
       
-      while ((match = columnLabelRegex.exec(svgText)) !== null) {
-        const coord = transformCoordinate(
-          parseFloat(match[1]),
-          parseFloat(match[2]),
-          match[3]
-        )
+      textElements.forEach(textElement => {
+        const x = parseFloat(textElement.attr('x') || 0)
+        const y = parseFloat(textElement.attr('y') || 0)
+        const text = textElement.text().trim()
+        const transform = textElement.parent().attr('transform') || ''
         
-        if (coord.y < 200) {
-          coordinateLabels.top.push(coord)
-        } else if (coord.y > 1300) {
-          coordinateLabels.bottom.push(coord)
+        // Parse transform matrix to get actual coordinates
+        let actualX = x
+        let actualY = y
+        
+        const transformMatch = transform.match(/matrix\(([^)]+)\)/)
+        if (transformMatch) {
+          const values = transformMatch[1].split(',').map(v => parseFloat(v.trim()))
+          if (values.length >= 6) {
+            actualX = values[0] * x + values[2] * y + values[4]
+            actualY = values[1] * x + values[3] * y + values[5]
+          }
         }
-      }
-    }
-
-    const extractRowLabels = (svgText) => {
-      const rowLabelRegex = /<text[^>]*x="([^"]*)"|[^>]*y="([^"]*)"|[^>]*>(\d{1,2})<\/text>/g
-      let match
+        
+        // Classify based on position and content
+        if (text.match(/^[A-Z][A-Z]$/)) {
+          // Column labels (AA, AB, AC, BA, BB, BC, etc.)
+          if (actualY < 200) {
+            coordinateLabels.top.push({ label: text, x: actualX, y: actualY })
+          } else if (actualY > 1300) {
+            coordinateLabels.bottom.push({ label: text, x: actualX, y: actualY })
+          }
+        } else if (text.match(/^\d+$/)) {
+          // Row labels (34, 33, 32, etc.)
+          if (actualX < 100) {
+            coordinateLabels.left.push({ label: text, x: actualX, y: actualY })
+          } else if (actualX > 3400) {
+            coordinateLabels.right.push({ label: text, x: actualX, y: actualY })
+          }
+        }
+      })
       
-      while ((match = rowLabelRegex.exec(svgText)) !== null) {
-        const coord = transformCoordinate(
-          parseFloat(match[1]),
-          parseFloat(match[2]),
-          match[3]
-        )
-        
-        if (coord.x < 200) {
-          coordinateLabels.left.push(coord)
-        } else if (coord.x > 3400) {
-          coordinateLabels.right.push(coord)
-        }
-      }
-    }
-
-    const transformCoordinate = (x, y, label) => ({
-      label,
-      x: x + COORDINATE_TRANSFORM.x,
-      y: y + COORDINATE_TRANSFORM.y
-    })
-
-    const sortCoordinateLabels = () => {
+      // Sort coordinates for consistent ordering
       coordinateLabels.top.sort((a, b) => a.x - b.x)
       coordinateLabels.bottom.sort((a, b) => a.x - b.x)
-      coordinateLabels.left.sort((a, b) => b.y - a.y)
-      coordinateLabels.right.sort((a, b) => b.y - a.y)
+      coordinateLabels.left.sort((a, b) => b.y - a.y) // Top to bottom (descending Y)
+      coordinateLabels.right.sort((a, b) => b.y - a.y) // Top to bottom (descending Y)
+      
+      console.log('Detected coordinates:', coordinateLabels)
     }
 
+    // Generate grid based on detected coordinates
     const generateGrid = () => {
       if (!svgDraw) return
       
+      // Remove existing grid if it exists
       if (gridLayer) {
         gridLayer.remove()
       }
       
+      // Create grid layer
       gridLayer = svgDraw.group().addClass('grid-layer')
       
-      const boundaries = calculateGridBoundaries()
-      
-      generateVerticalGridLines(boundaries)
-      generateHorizontalGridLines(boundaries)
-      addCoordinateLabelsToGrid()
-      addTileCoordinatesToCells()
-    }
-
-    const calculateGridBoundaries = () => {
-      return {
-        topY: coordinateLabels.top.length > 0 ? Math.min(...coordinateLabels.top.map(c => c.y)) - 20 : 80,
-        bottomY: coordinateLabels.bottom.length > 0 ? Math.max(...coordinateLabels.bottom.map(c => c.y)) + 20 : 1420,
-        leftX: coordinateLabels.left.length > 0 ? Math.min(...coordinateLabels.left.map(c => c.x)) - 20 : 60,
-        rightX: coordinateLabels.right.length > 0 ? Math.max(...coordinateLabels.right.map(c => c.x)) + 20 : 3520
-      }
-    }
-
-    const generateVerticalGridLines = ({ topY, bottomY }) => {
-      if (coordinateLabels.top.length === 0 && coordinateLabels.bottom.length === 0) return
-      
-      const uniqueColumns = getUniqueColumns()
-      drawColumnGridLines(uniqueColumns, topY, bottomY)
-      drawColumnBoundaries(uniqueColumns, topY, bottomY)
-    }
-
-    const generateHorizontalGridLines = ({ leftX, rightX }) => {
-      if (coordinateLabels.left.length === 0 && coordinateLabels.right.length === 0) return
-      
-      const uniqueRows = getUniqueRows()
-      drawRowGridLines(uniqueRows, leftX, rightX)
-      drawRowBoundaries(uniqueRows, leftX, rightX)
-    }
-
-    const getUniqueColumns = () => {
-      const columnCoords = [...coordinateLabels.top, ...coordinateLabels.bottom]
-      const uniqueColumns = []
-      
-      columnCoords.forEach(coord => {
-        if (!uniqueColumns.find(c => Math.abs(c.x - coord.x) < 5)) {
-          uniqueColumns.push(coord)
-        }
-      })
-      
-      return uniqueColumns.sort((a, b) => a.x - b.x)
-    }
-
-    const getUniqueRows = () => {
-      const rowCoords = [...coordinateLabels.left, ...coordinateLabels.right]
-      const uniqueRows = []
-      
-      rowCoords.forEach(coord => {
-        if (!uniqueRows.find(r => Math.abs(r.y - coord.y) < 5)) {
-          uniqueRows.push(coord)
-        }
-      })
-      
-      return uniqueRows.sort((a, b) => a.y - b.y)
-    }
-
-    const drawColumnGridLines = (uniqueColumns, topY, bottomY) => {
-      for (let i = 0; i < uniqueColumns.length - 1; i++) {
-        const gridLineX = uniqueColumns[i].x + (uniqueColumns[i + 1].x - uniqueColumns[i].x) / 2
-        createGridLine(gridLineX, topY, gridLineX, bottomY, 'grid-line-vertical')
-      }
-    }
-
-    const drawRowGridLines = (uniqueRows, leftX, rightX) => {
-      for (let i = 0; i < uniqueRows.length - 1; i++) {
-        const gridLineY = uniqueRows[i].y + (uniqueRows[i + 1].y - uniqueRows[i].y) / 2
-        createGridLine(leftX, gridLineY, rightX, gridLineY, 'grid-line-horizontal')
-      }
-    }
-
-    const drawColumnBoundaries = (uniqueColumns, topY, bottomY) => {
-      if (uniqueColumns.length === 0) return
-      
-      const colSpacing = uniqueColumns.length > 1 ? uniqueColumns[1].x - uniqueColumns[0].x : 36
-      const firstCol = uniqueColumns[0]
-      const lastCol = uniqueColumns[uniqueColumns.length - 1]
-      
-      createGridLine(firstCol.x - colSpacing/2, topY, firstCol.x - colSpacing/2, bottomY, 'grid-line-vertical')
-      createGridLine(lastCol.x + colSpacing/2, topY, lastCol.x + colSpacing/2, bottomY, 'grid-line-vertical')
-    }
-
-    const drawRowBoundaries = (uniqueRows, leftX, rightX) => {
-      if (uniqueRows.length === 0) return
-      
-      const rowSpacing = uniqueRows.length > 1 ? uniqueRows[1].y - uniqueRows[0].y : 36
-      const firstRow = uniqueRows[0]
-      const lastRow = uniqueRows[uniqueRows.length - 1]
-      
-      createGridLine(leftX, firstRow.y - rowSpacing/2, rightX, firstRow.y - rowSpacing/2, 'grid-line-horizontal')
-      createGridLine(leftX, lastRow.y + rowSpacing/2, rightX, lastRow.y + rowSpacing/2, 'grid-line-horizontal')
-    }
-
-    const createGridLine = (x1, y1, x2, y2, className) => {
-      gridLayer.line(x1, y1, x2, y2)
-        .stroke({ color: '#ddd', width: 1, dasharray: '2,2' })
-        .addClass(className)
-    }
-
-    const addCoordinateLabelsToGrid = () => {
-      if (!gridLayer) return
-      
-      const labelConfig = {
-        font: { family: 'Tahoma', size: 16, weight: 'bold' },
-        fill: '#666'
-      }
-      
-      addLabels(coordinateLabels.top, { x: -10, y: -20 }, 'coordinate-label-top', labelConfig)
-      addLabels(coordinateLabels.bottom, { x: -10, y: 5 }, 'coordinate-label-bottom', labelConfig)
-      addLabels(coordinateLabels.left, { x: -20, y: -8 }, 'coordinate-label-left', labelConfig)
-      addLabels(coordinateLabels.right, { x: 5, y: -8 }, 'coordinate-label-right', labelConfig)
-    }
-
-    const addLabels = (labels, offset, className, config) => {
-      labels.forEach(coord => {
-        gridLayer.text(coord.label)
-          .move(coord.x + offset.x, coord.y + offset.y)
-          .font(config.font)
-          .fill(config.fill)
-          .addClass(className)
-      })
-    }
-
-    const addTileCoordinatesToCells = () => {
-      if (!gridLayer) return
-      
-      const columns = coordinateLabels.top.length > 0 ? coordinateLabels.top : coordinateLabels.bottom
-      const rows = coordinateLabels.left.length > 0 ? coordinateLabels.left : coordinateLabels.right
-      
-      if (columns.length === 0 || rows.length === 0) return
-      
-      const sortedColumns = [...columns].sort((a, b) => a.x - b.x)
-      const sortedRows = [...rows].sort((a, b) => a.y - b.y)
-      
-      sortedColumns.forEach((col, colIndex) => {
-        sortedRows.forEach((row, rowIndex) => {
-          createClickableTile(col, row, colIndex, rowIndex, sortedColumns, sortedRows)
+      // Generate vertical grid lines (columns)
+      if (coordinateLabels.top.length > 0 || coordinateLabels.bottom.length > 0) {
+        const columnCoords = [...coordinateLabels.top, ...coordinateLabels.bottom]
+        const uniqueColumns = []
+        
+        columnCoords.forEach(coord => {
+          if (!uniqueColumns.find(c => Math.abs(c.x - coord.x) < 5)) {
+            uniqueColumns.push(coord)
+          }
         })
-      })
-    }
-
-    const createClickableTile = (col, row, colIndex, rowIndex, sortedColumns, sortedRows) => {
-      const tileCoordinate = `${col.label}-${row.label.padStart(2, '0')}`
-      
-      // Calculate tile dimensions
-      const tileWidth = colIndex < sortedColumns.length - 1 
-        ? sortedColumns[colIndex + 1].x - col.x 
-        : (colIndex > 0 ? col.x - sortedColumns[colIndex - 1].x : 36)
-      
-      const tileHeight = rowIndex < sortedRows.length - 1 
-        ? sortedRows[rowIndex + 1].y - row.y 
-        : (rowIndex > 0 ? row.y - sortedRows[rowIndex - 1].y : 36)
-      
-      // Create invisible clickable rectangle for the tile
-      const tileRect = gridLayer.rect(Math.abs(tileWidth), Math.abs(tileHeight))
-        .move(col.x - Math.abs(tileWidth)/2, row.y - Math.abs(tileHeight)/2)
-        .fill('transparent')
-        .stroke({ color: 'transparent', width: 1 })
-        .addClass('tile-clickable')
-        .css({ cursor: 'pointer' })
-      
-      // Add click event to the tile
-      tileRect.on('click', (e) => {
-        e.stopPropagation()
-        handleTileClick({
-          coordinate: tileCoordinate,
-          position: { x: col.x, y: row.y },
-          dimensions: { width: Math.abs(tileWidth), height: Math.abs(tileHeight) },
-          bounds: {
-            left: col.x - Math.abs(tileWidth)/2,
-            right: col.x + Math.abs(tileWidth)/2,
-            top: row.y - Math.abs(tileHeight)/2,
-            bottom: row.y + Math.abs(tileHeight)/2
-          },
-          columnIndex: colIndex,
-          rowIndex: rowIndex
+        
+        uniqueColumns.forEach(coord => {
+          const line = gridLayer.line(coord.x, 80, coord.x, 1420)
+            .stroke({ color: '#ddd', width: 1, dasharray: '2,2' })
+            .addClass('grid-line-vertical')
         })
-      })
+      }
       
-      // Add hover effects
-      tileRect.on('mouseenter', () => {
-        tileRect.stroke({ color: '#007bff', width: 2, opacity: 0.5 })
-      })
-      
-      tileRect.on('mouseleave', () => {
-        tileRect.stroke({ color: 'transparent', width: 1 })
-      })
-      
-      // Add the coordinate text label
-      gridLayer.text(tileCoordinate)
-        .move(col.x - 14, row.y - 13)
-        .font({ family: 'Arial', size: 10, weight: 'normal' })
-        .fill('#999')
-        .addClass('tile-coordinate')
-        .css({ 
-          'pointer-events': 'none',
-          'user-select': 'none'
+      // Generate horizontal grid lines (rows)
+      if (coordinateLabels.left.length > 0 || coordinateLabels.right.length > 0) {
+        const rowCoords = [...coordinateLabels.left, ...coordinateLabels.right]
+        const uniqueRows = []
+        
+        rowCoords.forEach(coord => {
+          if (!uniqueRows.find(r => Math.abs(r.y - coord.y) < 5)) {
+            uniqueRows.push(coord)
+          }
         })
+        
+        uniqueRows.forEach(coord => {
+          const line = gridLayer.line(60, coord.y, 3520, coord.y)
+            .stroke({ color: '#ddd', width: 1, dasharray: '2,2' })
+            .addClass('grid-line-horizontal')
+        })
+      }
+      
+      console.log('Grid generated successfully')
     }
 
-    const handleTileClick = (tileData) => {
-      console.log('=== TILE CLICKED ===')
-      console.log('Coordinate:', tileData.coordinate)
-      console.log('Center Position:', tileData.position)
-      console.log('Dimensions:', tileData.dimensions)
-      console.log('Bounds:', tileData.bounds)
-      console.log('Grid Indices:', { column: tileData.columnIndex, row: tileData.rowIndex })
-      console.log('====================')
-      
-      // Show visual feedback
-      ElMessage.info(`Clicked tile: ${tileData.coordinate}`)
-    }
 
-    const moveGrid = (offsetX, offsetY) => {
-      if (!gridLayer) return
-      
-      const currentTransform = gridLayer.transform()
-      const newX = (currentTransform.translateX || 0) + offsetX
-      const newY = (currentTransform.translateY || 0) + offsetY
-      
-      gridLayer.translate(newX, newY)
-      
-      gridOffset.x = newX
-      gridOffset.y = newY
-    }
-
+    // Organize SVG elements into logical layers
     const organizeIntoLayers = () => {
       if (!svgDraw) return
       
-      initializeLayerGroups()
+      // Initialize layer groups
+      layerGroups = {
+        'floor-shape': [],
+        'customer-zones': [],
+        'server-racks': [],
+        'cooling-units': [],
+        'cooling-tiles': [],
+        'pdu-ppc': [],
+        'other': [],
+        'grid': []
+      }
+      
+      // Add grid layer to layerGroups if it exists
+      if (gridLayer) {
+        layerGroups['grid'].push(gridLayer)
+      }
+      
+      // Find and add original coordinate text elements to grid layer
+      const textElements = svgDraw.find('text')
+      textElements.forEach(textElement => {
+        const text = textElement.text().trim()
+        // Check if this is a coordinate label
+        if (text.match(/^[A-Z][A-Z]$/) || text.match(/^\d+$/)) {
+          layerGroups['grid'].push(textElement)
+        }
+      })
       
       let totalElements = 0
+      
+      // Find all group elements
       const groups = svgDraw.find('g')
       
       groups.forEach((group, index) => {
         const elementType = classifyElement(group)
         
+        // Add to appropriate layer
         layerGroups[elementType].push(group)
         
+        // Add data attributes for identification
         group.data('element-type', elementType)
         group.data('element-id', `${elementType}-${index}`)
         
@@ -698,22 +473,15 @@ export default {
       })
       
       objectCount.value = totalElements
+      console.log('Layer organization:', layerGroups)
     }
 
-    const initializeLayerGroups = () => {
-      layerGroups = Object.values(LAYER_TYPES).reduce((acc, type) => {
-        acc[type] = []
-        return acc
-      }, {})
-      
-      if (gridLayer) {
-        layerGroups[LAYER_TYPES.GRID].push(gridLayer)
-      }
-    }
-
+    // Group related elements together (like server racks with multiple groups)
     const groupRelatedElements = (groups) => {
       const result = []
       const processed = new Set()
+      
+      console.log('Starting groupRelatedElements with', groups.length, 'groups')
       
       groups.forEach((group, index) => {
         if (processed.has(index)) return
@@ -721,106 +489,104 @@ export default {
         const elementType = classifyElement(group)
         const transform = group.attr('transform') || ''
         
-        if (shouldGroupByTransform(elementType)) {
-          const relatedGroups = findGroupsWithSameTransform(groups, group, transform, processed, index)
-          result.push({ type: elementType, groups: relatedGroups, transform })
-        } else {
+        // For server racks and other equipment, look for consecutive groups with same transform pattern
+        if (['server-racks', 'cooling-units', 'pdu-ppc'].includes(elementType)) {
+          const relatedGroups = [group]
           processed.add(index)
-          result.push({ type: elementType, groups: [group], transform })
+          
+          // Extract transform pattern (translate coordinates)
+          const transformMatch = transform.match(/translate\(([^)]+)\)/)
+          if (transformMatch) {
+            const translatePattern = transformMatch[1]
+            console.log(`Looking for groups with translate pattern: ${translatePattern}`)
+            
+            // Look for other groups with the same translate pattern
+            groups.forEach((otherGroup, otherIndex) => {
+              if (processed.has(otherIndex) || index === otherIndex) return
+              
+              const otherTransform = otherGroup.attr('transform') || ''
+              if (otherTransform.includes(`translate(${translatePattern})`)) {
+                const otherType = classifyElement(otherGroup)
+                // More flexible grouping - any element with same translate should group together
+                if (['server-racks', 'cooling-units', 'pdu-ppc', 'other'].includes(otherType)) {
+                  console.log(`Found related group: ${otherType} with same translate`)
+                  relatedGroups.push(otherGroup)
+                  processed.add(otherIndex)
+                }
+              }
+            })
+          }
+          
+          console.log(`Created ${elementType} group with ${relatedGroups.length} elements`)
+          result.push({
+            type: elementType,
+            groups: relatedGroups,
+            transform: transform
+          })
+        } else {
+          // Single group elements
+          processed.add(index)
+          result.push({
+            type: elementType,
+            groups: [group],
+            transform: transform
+          })
         }
       })
       
+      console.log(`groupRelatedElements result: ${result.length} element groups`)
       return result
     }
 
-    const shouldGroupByTransform = (elementType) => {
-      return [LAYER_TYPES.SERVER_RACKS, LAYER_TYPES.COOLING_UNITS, LAYER_TYPES.PDU_PPC].includes(elementType)
-    }
-
-    const findGroupsWithSameTransform = (groups, group, transform, processed, index) => {
-      const relatedGroups = [group]
-      processed.add(index)
+    // Classify elements based on their attributes
+    const classifyElement = (element) => {
+      const fill = element.attr('fill') || ''
+      const stroke = element.attr('stroke') || ''
+      const transform = element.attr('transform') || ''
       
-      const transformMatch = transform.match(/translate\(([^)]+)\)/)
-      if (!transformMatch) return relatedGroups
-      
-      const translatePattern = transformMatch[1]
-      
-      groups.forEach((otherGroup, otherIndex) => {
-        if (processed.has(otherIndex) || index === otherIndex) return
-        
-        const otherTransform = otherGroup.attr('transform') || ''
-        if (otherTransform.includes(`translate(${translatePattern})`)) {
-          const otherType = classifyElement(otherGroup)
-          if (canGroupTogether(otherType)) {
-            relatedGroups.push(otherGroup)
-            processed.add(otherIndex)
+      // Check for floor shape (silver fill with base transform)
+      if (fill.includes('silver') && transform.includes('matrix(1,0,0,1,98,-84)')) {
+        const paths = element.find('path')
+        if (paths.length > 0) {
+          const pathData = paths[0].attr('d') || ''
+          if (pathData.length > 200) {
+            return 'floor-shape'
           }
         }
-      })
-      
-      return relatedGroups
-    }
-
-    const canGroupTogether = (elementType) => {
-      return [LAYER_TYPES.SERVER_RACKS, LAYER_TYPES.COOLING_UNITS, LAYER_TYPES.PDU_PPC, LAYER_TYPES.OTHER].includes(elementType)
-    }
-
-    const classifyElement = (element) => {
-      const attributes = {
-        fill: element.attr('fill') || '',
-        stroke: element.attr('stroke') || '',
-        transform: element.attr('transform') || '',
-        fillOpacity: element.attr('fill-opacity')
       }
       
-      if (isFloorShape(element, attributes)) return LAYER_TYPES.FLOOR_SHAPE
-      if (isCustomerZone(attributes)) return LAYER_TYPES.CUSTOMER_ZONES
-      if (isServerRack(attributes)) return LAYER_TYPES.SERVER_RACKS
-      if (isCoolingUnit(attributes)) return LAYER_TYPES.COOLING_UNITS
-      if (isCoolingTile(element)) return LAYER_TYPES.COOLING_TILES
-      if (isPDU(attributes)) return LAYER_TYPES.PDU_PPC
-      
-      return LAYER_TYPES.OTHER
-    }
-
-    const isFloorShape = (element, { fill, transform }) => {
-      if (!fill.includes(ELEMENT_COLORS.SILVER) || !transform.includes('matrix(1,0,0,1,98,-84)')) {
-        return false
+      // Check for customer zones (blue highlighted areas)
+      if (fill.includes('rgb(0,120,215)') && element.attr('fill-opacity') === '0.0784') {
+        return 'customer-zones'
       }
       
-      const paths = element.find('path')
-      return paths.length > 0 && (paths[0].attr('d') || '').length > 200
-    }
-
-    const isCustomerZone = ({ fill, fillOpacity }) => {
-      return fill.includes(ELEMENT_COLORS.BLUE_ZONE) && fillOpacity === '0.0784'
-    }
-
-    const isServerRack = ({ fill, transform }) => {
-      const hasValidFill = fill.includes(ELEMENT_COLORS.GRAY_RACK) || fill.includes(ELEMENT_COLORS.RED_RACK)
-      const hasTransform = transform.includes('translate') || transform.includes('rotate')
-      return hasValidFill && hasTransform
-    }
-
-    const isCoolingUnit = ({ fill }) => {
-      return fill.includes(ELEMENT_COLORS.BLUE_COOLING) || fill.includes(ELEMENT_COLORS.LIGHT_BLUE_COOLING)
-    }
-
-    const isCoolingTile = (element) => {
+      // Check for server racks (gray/red fills with transforms)
+      if ((fill.includes('rgb(110,110,110)') || fill.includes('rgb(230,0,0)')) && 
+          (transform.includes('translate') || transform.includes('rotate'))) {
+        return 'server-racks'
+      }
+      
+      // Check for cooling units (blue fills)
+      if (fill.includes('rgb(62,153,223)') || fill.includes('rgb(171,211,241)')) {
+        return 'cooling-units'
+      }
+      
+      // Check for cooling tiles (many curve commands)
       const paths = element.find('path')
       for (let i = 0; i < paths.length; i++) {
         const pathData = paths[i].attr('d') || ''
         const cCount = (pathData.match(/C/g) || []).length
         if (cCount >= 30 && cCount <= 50) {
-          return true
+          return 'cooling-tiles'
         }
       }
-      return false
-    }
-
-    const isPDU = ({ fill }) => {
-      return fill.includes(ELEMENT_COLORS.GREEN_PDU) || fill.includes(ELEMENT_COLORS.LIGHT_GREEN_PDU)
+      
+      // Check for PDUs/PPCs (green fills)
+      if (fill.includes('rgb(103,203,51)') || fill.includes('rgb(189,232,167)')) {
+        return 'pdu-ppc'
+      }
+      
+      return 'other'
     }
 
     // Find the top-level group for an element
@@ -895,22 +661,18 @@ export default {
       // Set up drag functionality
       setupDrag()
       
-      // Click on background to deselect (but not on tiles)
-      svgDraw.on('click', (e) => {
-        // Don't deselect if clicking on a tile
-        if (!e.target.classList.contains('tile-clickable')) {
-          deselectAll()
-        }
+      // Click on background to deselect
+      svgDraw.on('click', () => {
+        deselectAll()
       })
     }
 
     // Simple drag implementation
     const setupDrag = () => {
-      // Get all groups with element types (excluding floor-shape and grid)
+      // Get all groups with element types (excluding floor-shape)
       const allGroups = svgDraw.find('g').filter(g => {
         const elementType = g.data('element-type')
-        const isNonDraggable = g.hasClass('non-draggable')
-        return elementType && elementType !== 'floor-shape' && elementType !== 'grid' && !isNonDraggable
+        return elementType && elementType !== 'floor-shape'
       })
       
       allGroups.forEach(group => {
@@ -1014,35 +776,58 @@ export default {
       selectedObject.value = null
     }
 
+    // Toggle layer visibility
     const toggleLayer = (layerType) => {
       if (!layerGroups[layerType]) return
       
-      const isVisible = layerVisibility.value[layerType]
+      const isVisible = getLayerVisibility(layerType)
       
       layerGroups[layerType].forEach(group => {
         group.css({ display: isVisible ? 'block' : 'none' })
       })
+      
+      console.log(`Layer ${layerType} ${isVisible ? 'shown' : 'hidden'}`)
     }
 
+    // Get layer visibility state
+    const getLayerVisibility = (layerType) => {
+      switch (layerType) {
+        case 'floor-shape': return showFloorShapeLayer.value
+        case 'customer-zones': return showCustomerZonesLayer.value
+        case 'server-racks': return showServerRacksLayer.value
+        case 'cooling-units': return showCoolingUnitsLayer.value
+        case 'cooling-tiles': return showCoolingTilesLayer.value
+        case 'pdu-ppc': return showPDULayer.value
+        case 'other': return showOtherLayer.value
+        case 'grid': return showGridLayer.value
+        default: return true
+      }
+    }
+
+    // Zoom controls
     const zoomIn = () => {
-      if (!svgDraw) return
-      const currentZoom = svgDraw.zoom()
-      svgDraw.zoom(currentZoom * ZOOM_CONFIG.step)
-      zoomLevel.value = svgDraw.zoom()
+      if (svgDraw) {
+        const currentZoom = svgDraw.zoom()
+        svgDraw.zoom(currentZoom * 1.2)
+        zoomLevel.value = svgDraw.zoom()
+      }
     }
 
     const zoomOut = () => {
-      if (!svgDraw) return
-      const currentZoom = svgDraw.zoom()
-      svgDraw.zoom(currentZoom / ZOOM_CONFIG.step)
-      zoomLevel.value = svgDraw.zoom()
+      if (svgDraw) {
+        const currentZoom = svgDraw.zoom()
+        svgDraw.zoom(currentZoom * 0.8)
+        zoomLevel.value = svgDraw.zoom()
+      }
     }
 
     const resetZoom = () => {
-      if (!svgDraw) return
-      svgDraw.zoom(1)
-      svgDraw.viewbox(0, 0, DEFAULT_VIEWBOX.width, DEFAULT_VIEWBOX.height)
-      zoomLevel.value = 1
+      if (svgDraw) {
+        svgDraw.zoom(1)
+        // Reset viewbox instead of using panTo
+        svgDraw.viewbox(0, 0, 3660, 1417)
+        zoomLevel.value = 1
+      }
     }
 
     const fitToScreen = () => {
@@ -1069,220 +854,104 @@ export default {
       }
     }
 
+    // Clear canvas
     const clearCanvas = () => {
-      if (!svgDraw) return
-      
-      svgDraw.clear()
-      resetCanvasState()
+      if (svgDraw) {
+        svgDraw.clear()
+        layerGroups = {}
+        gridLayer = null
+        coordinateLabels = { top: [], bottom: [], left: [], right: [] }
+        objectCount.value = 0
+        selectedObject.value = null
+        importStatus.value = 'Ready'
+      }
     }
 
-    const resetCanvasState = () => {
-      layerGroups = {}
-      gridLayer = null
-      coordinateLabels = { top: [], bottom: [], left: [], right: [] }
-      gridOffset = { x: 0, y: 0 }
-      originalSVGContent = null
-      objectCount.value = 0
-      selectedObject.value = null
-      importStatus.value = 'Ready'
-    }
-
+    // Handle mouse wheel for zooming
     const handleWheel = (e) => {
       e.preventDefault()
-      if (!svgDraw) return
-      
-      const delta = e.deltaY > 0 ? 1 / ZOOM_CONFIG.step : ZOOM_CONFIG.step
-      const currentZoom = svgDraw.zoom()
-      svgDraw.zoom(currentZoom * delta)
-      zoomLevel.value = svgDraw.zoom()
+      if (svgDraw) {
+        const delta = e.deltaY > 0 ? 0.9 : 1.1
+        const currentZoom = svgDraw.zoom()
+        svgDraw.zoom(currentZoom * delta)
+        zoomLevel.value = svgDraw.zoom()
+      }
     }
 
+    // Toggle drag mode
     const toggleDragMode = () => {
       if (!svgDraw) return
       
-      const draggableGroups = getDraggableGroups()
-      
-      draggableGroups.forEach(group => {
-        group.draggable(dragEnabled.value)
+      // Get all groups with element types (excluding floor-shape)
+      const allGroups = svgDraw.find('g').filter(g => {
+        const elementType = g.data('element-type')
+        return elementType && elementType !== 'floor-shape'
       })
       
+      allGroups.forEach(group => {
+        if (dragEnabled.value) {
+          group.draggable()
+        } else {
+          group.draggable(false)
+        }
+      })
+      
+      console.log(`Drag mode ${dragEnabled.value ? 'enabled' : 'disabled'}`)
       ElMessage.info(`Drag mode ${dragEnabled.value ? 'enabled' : 'disabled'}`)
     }
 
-    const getDraggableGroups = () => {
-      return svgDraw.find('g').filter(g => {
-        const elementType = g.data('element-type')
-        const isNonDraggable = g.hasClass('non-draggable')
-        return elementType && 
-               elementType !== LAYER_TYPES.FLOOR_SHAPE && 
-               elementType !== LAYER_TYPES.GRID && 
-               !isNonDraggable
-      })
-    }
-
+    // Save floor plan
     const saveFloorPlan = () => {
-      if (!svgDraw || !originalSVGContent) {
-        ElMessage.warning('No floor plan to save. Please import an SVG first.')
-        return
-      }
-
-      try {
-        const floorPlanData = createFloorPlanData()
+      if (svgDraw) {
+        const svgData = svgDraw.svg()
         const floorPlans = JSON.parse(localStorage.getItem('floorPlans') || '{}')
+        const floorId = route.params.id
         
-        floorPlans[route.params.id] = floorPlanData
+        floorPlans[floorId] = {
+          svgData: svgData,
+          lastModified: new Date().toISOString(),
+          objectCount: objectCount.value
+        }
+        
         localStorage.setItem('floorPlans', JSON.stringify(floorPlans))
-        
         ElMessage.success('Floor plan saved successfully')
-      } catch (error) {
-        console.error('Error saving floor plan:', error)
-        ElMessage.error('Failed to save floor plan')
       }
     }
 
-    const createFloorPlanData = () => {
-      return {
-        originalSVG: originalSVGContent,
-        elementStates: getElementStates(),
-        coordinateLabels,
-        gridOffset,
-        layerVisibility: layerVisibility.value,
-        lastModified: new Date().toISOString(),
-        objectCount: objectCount.value
-      }
-    }
-
-    const getElementStates = () => {
-      const elementStates = []
-      const groups = svgDraw.find('g')
-      
-      groups.forEach(group => {
-        const elementType = group.data('element-type')
-        if (elementType && elementType !== LAYER_TYPES.GRID) {
-          const transform = group.transform()
-          elementStates.push({
-            id: group.data('element-id'),
-            type: elementType,
-            transform: {
-              translateX: transform.translateX || 0,
-              translateY: transform.translateY || 0,
-              rotate: transform.rotate || 0,
-              scaleX: transform.scaleX || 1,
-              scaleY: transform.scaleY || 1
-            }
-          })
-        }
-      })
-      
-      return elementStates
-    }
-
+    // Load existing floor plan
     const loadFloorPlan = () => {
-      try {
-        const floorPlans = JSON.parse(localStorage.getItem('floorPlans') || '{}')
-        const savedPlan = floorPlans[route.params.id]
-        
-        if (!savedPlan) return
-        
-        if (savedPlan.originalSVG) {
-          loadNewFormatPlan(savedPlan)
-        } else if (savedPlan.svgData) {
-          parseSVGContent(savedPlan.svgData)
-        }
-      } catch (error) {
-        console.error('Error loading floor plan:', error)
-        ElMessage.error('Failed to load floor plan')
+      const floorPlans = JSON.parse(localStorage.getItem('floorPlans') || '{}')
+      const floorId = route.params.id
+      
+      if (floorPlans[floorId] && floorPlans[floorId].svgData) {
+        console.log('Loading existing floor plan:', floorId)
+        parseSVGContent(floorPlans[floorId].svgData)
       }
     }
 
-    const loadNewFormatPlan = (savedPlan) => {
-      originalSVGContent = savedPlan.originalSVG
-      parseSVGContent(savedPlan.originalSVG, true)
-      
-      restoreCoordinateLabels(savedPlan)
-      generateGrid()
-      restoreGridState(savedPlan)
-      
-      setTimeout(() => {
-        restoreElementStates(savedPlan)
-        restoreLayerVisibility(savedPlan)
-        setupInteractions()
-        setTimeout(fitToScreen, 100)
-      }, 100)
-    }
-
-    const restoreCoordinateLabels = (savedPlan) => {
-      if (savedPlan.coordinateLabels) {
-        coordinateLabels = savedPlan.coordinateLabels
-      }
-    }
-
-    const restoreGridState = (savedPlan) => {
-      if (savedPlan.gridOffset && gridLayer) {
-        gridOffset = savedPlan.gridOffset
-        gridLayer.translate(gridOffset.x, gridOffset.y)
-      }
-      
-      if (gridLayer) {
-        gridLayer.back()
-        gridLayer.addClass('non-draggable')
-      }
-    }
-
-    const restoreElementStates = (savedPlan) => {
-      if (!savedPlan.elementStates) return
-      
-      savedPlan.elementStates.forEach(state => {
-        const groups = svgDraw.find('g')
-        const group = groups.find(g => g.data('element-id') === state.id)
-        if (group && state.transform) {
-          group.transform(state.transform)
-        }
-      })
-    }
-
-    const restoreLayerVisibility = (savedPlan) => {
-      if (!savedPlan.layerVisibility) return
-      
-      Object.keys(savedPlan.layerVisibility).forEach(layer => {
-        if (layerVisibility.value[layer] !== undefined) {
-          layerVisibility.value[layer] = savedPlan.layerVisibility[layer] ?? true
-        }
-      })
-      
-      Object.keys(savedPlan.layerVisibility).forEach(layer => {
-        toggleLayer(layer)
-      })
-    }
-
+    // Initialize on mount
     onMounted(() => {
-      initializeFloorData()
-      initSVGCanvas()
-      nextTick(loadFloorPlan)
-    })
-
-    const initializeFloorData = () => {
-      try {
-        const floors = JSON.parse(localStorage.getItem('floors') || '[]')
-        const sites = JSON.parse(localStorage.getItem('sites') || '[]')
-        const floorId = parseInt(route.params.id)
-        
-        const floor = floors.find(f => f.id === floorId || f.id === String(floorId))
-        
-        if (floor) {
-          const site = sites.find(s => s.id === floor.siteId)
-          siteName.value = site?.name || 'Unknown Site'
-          floorName.value = floor.name
-        } else {
-          siteName.value = 'Unknown Site'
-          floorName.value = 'Unknown Floor'
-        }
-      } catch (error) {
-        console.error('Error initializing floor data:', error)
+      const floors = JSON.parse(localStorage.getItem('floors') || '[]')
+      const sites = JSON.parse(localStorage.getItem('sites') || '[]')
+      const floorId = parseInt(route.params.id)
+      
+      console.log('Looking for floor with ID:', floorId)
+      const floor = floors.find(f => f.id === floorId || f.id === String(floorId))
+      
+      if (floor) {
+        console.log('Found floor:', floor)
+        const site = sites.find(s => s.id === floor.siteId)
+        siteName.value = site ? site.name : 'Unknown Site'
+        floorName.value = floor.name
+      } else {
+        console.log('Floor not found. Available floors:', floors)
         siteName.value = 'Unknown Site'
         floorName.value = 'Unknown Floor'
       }
-    }
+      
+      initSVGCanvas()
+      loadFloorPlan()
+    })
 
     return {
       svgContainer,
@@ -1293,7 +962,14 @@ export default {
       floorName,
       importStatus,
       zoomLevel,
-      layerVisibility,
+      showFloorShapeLayer,
+      showCustomerZonesLayer,
+      showServerRacksLayer,
+      showCoolingUnitsLayer,
+      showCoolingTilesLayer,
+      showPDULayer,
+      showOtherLayer,
+      showGridLayer,
       dragEnabled,
       triggerSVGInput,
       handleSVGImport,
@@ -1305,8 +981,7 @@ export default {
       fitToScreen,
       clearCanvas,
       handleWheel,
-      saveFloorPlan,
-      moveGrid
+      saveFloorPlan
     }
   }
 }
